@@ -1,0 +1,17 @@
+# ── Required (backend API + live Reddit/LinkedIn classification) ──────────────
+groq>=0.11.0              # LLM risk classification (llama-3.3-70b-versatile)
+fastapi>=0.110.0          # backend API serving the React dashboard
+uvicorn[standard]>=0.29.0 # ASGI server
+pyyaml>=6.0               # config.yaml
+python-dotenv>=1.0.0      # .env secrets
+# (live Reddit/LinkedIn come from the n8n webhook via stdlib urllib — no extra dep)
+
+# ── Optional — only needed if you switch a channel to a real live connector ───
+telethon>=1.36.0          # Telegram (mode: live)
+praw>=7.7.1               # Reddit official API (instead of n8n)
+tweepy>=4.14.0            # X / Twitter API v2 (mode: live, paid)
+vaderSentiment>=3.3.2     # local sentiment pre-pass for the CLI pipeline (degrades gracefully)
+# linkedin-api            # ToS-gated LinkedIn scraper (install manually if you accept the risk)
+
+# ── Legacy (no longer used; kept for the older Gemini code path) ──────────────
+google-genai>=1.0.0

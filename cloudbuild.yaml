@@ -1,0 +1,58 @@
+# Cloud Build → builds the Docker image and deploys it to Cloud Run.
+# Connect your repo in Cloud Build, create a trigger pointing at this file, set the
+# substitution variable _GROQ_API_KEY in the trigger, and push.
+
+substitutions:
+  _REGION: asia-south1                  # change to your region
+  _SERVICE: prudential-surveillance     # Cloud Run service name
+  _REPO: cloud-run-source-deploy        # Artifact Registry repo (auto-created below)
+  _GROQ_API_KEY: ""                     # SET THIS in the trigger (Advanced → Substitutions)
+
+steps:
+  # 1) Ensure the Artifact Registry repo exists.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        gcloud artifacts repositories describe ${_REPO} --location=${_REGION} \
+          || gcloud artifacts repositories create ${_REPO} \
+               --repository-format=docker --location=${_REGION}
+
+  # 2) Build the image.
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+      - .
+
+  # 3) Push it.
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+
+  # 4) Deploy to Cloud Run.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8080
+      - --memory=1Gi
+      - --cpu=1
+      - --timeout=300
+      - --set-env-vars=GROQ_API_KEY=${_GROQ_API_KEY}
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8

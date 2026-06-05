@@ -1,0 +1,14 @@
+# Keep the build context small + never ship secrets / local junk
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.env
+*.session
+*.session-journal
+data/cases/
+data/state/
+frontend/node_modules/
+frontend/dist/
+.git/
+*.log

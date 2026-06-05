@@ -1,0 +1,101 @@
+# Runtime configuration. Secrets live in .env, NOT here.
+
+poll_interval_seconds: 120      # how often the continuous loop polls each connector
+max_items_per_poll: 3           # process only 3 items per channel per scan
+
+# AI risk-analysis core (Gemini)
+analysis:
+  # LLM provider: Groq. Ordered fallback chain (rolls over if a model's quota is hit).
+  provider: groq
+  models:
+    - llama-3.3-70b-versatile   # primary — all LLM tasks use this
+  max_tokens: 1024
+  requests_per_minute: 25       # Groq free tier allows ~30 req/min for this model
+  max_retries: 3                # retries on 429 (honors the suggested retry delay)
+  # VADER compound score below which we still always send to the LLM regardless
+  # (negative content gets analyzed even if short).
+  negative_prefilter_threshold: -0.2
+
+# Monitoring target — every channel is narrowed to content about this organization.
+target:
+  name: "Prudential Singapore"
+  # Content is considered relevant if it mentions any alias (case-insensitive), comes
+  # from an official handle, or arrives from a search query for the target.
+  aliases:
+    - "Prudential"
+    - "Prudential Singapore"
+    - "Prudential SG"
+    - "PruSG"
+    - "Prudential Assurance Singapore"
+    - "Prudential Assurance Company Singapore"
+    - "PACS"
+    - "@prudentialsg"
+    - "prudential.com.sg"
+  official_handles:           # treated as first-party (always relevant)
+    - "prudentialsingapore"
+    - "prudentialsg"
+  require_relevance: true     # drop content that doesn't reference the target
+
+# Alerting thresholds — minimum LLM confidence required to raise an alert at each tier.
+thresholds:
+  high_min_confidence: 0.70
+  medium_min_confidence: 0.55
+  low_min_confidence: 0.40
+
+# Live Reddit + LinkedIn data comes from an n8n agent (Google-search scraping).
+n8n:
+  webhook_url: "https://babbumaan.app.n8n.cloud/webhook/420d11f0-a2be-4d23-baf1-ac3aa2ae45ba"
+
+# Which channels to run and how.
+#   mode: n8n   -> live data pulled from the n8n webhook above (reddit + linkedin)
+#   mode: demo  -> sample pool in data/demo_samples.json; each scan draws 10 at random
+channels:
+  reddit:
+    enabled: true
+    mode: n8n                   # live: 3 Reddit results per scan from the n8n agent
+  linkedin:
+    enabled: true
+    mode: n8n                   # live: 3 LinkedIn results per scan from the n8n agent
+  # telegram / x / whatsapp / quora are handled ENTIRELY in the frontend now
+  # (50-item pools with pre-baked analysis, 3 drawn at random per scan, never stored).
+  telegram:
+    enabled: false
+  x:
+    enabled: false
+  whatsapp:
+    enabled: false
+  quora:
+    enabled: false
+
+# LinkedIn scraper (ToS-gated). The unofficial linkedin-api library logs in with a real
+# account, which VIOLATES LinkedIn's User Agreement and risks account suspension / legal
+# action. It is DISABLED unless you both set mode: live above AND acknowledge the risk here,
+# and provide LINKEDIN_USERNAME / LINKEDIN_PASSWORD in .env. Prefer a licensed data provider.
+linkedin:
+  tos_acknowledged: false       # set true ONLY if you accept the ToS/account/legal risk
+  company: "prudential-singapore"
+
+# Privacy / compliance controls
+privacy:
+  hash_author_ids: true         # SHA-256 pseudonymize author identifiers in stored cases
+  retention_days: 90            # purge case files older than this on startup
+
+# RACM control + KRI reference for each risk category (drop in your real refs)
+racm_mapping:
+  REPUTATIONAL:
+    racm_ref: "RACM-REP-01"
+    kri_ref: "KRI-REP-NEGSENT"
+  COMPLIANCE_CONDUCT:
+    racm_ref: "RACM-CMP-04"
+    kri_ref: "KRI-CMP-VIOL"
+  MARKET_ABUSE:
+    racm_ref: "RACM-MAB-02"
+    kri_ref: "KRI-MAB-SUSP"
+  CYBER_OPERATIONAL:
+    racm_ref: "RACM-CYB-03"
+    kri_ref: "KRI-CYB-LEAK"
+
+# Escalation recipients (prototype LogEscalator just records these)
+escalation:
+  high:   ["compliance-duty@prudential.example", "soc@prudential.example"]
+  medium: ["risk-review@prudential.example"]
