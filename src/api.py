@@ -96,9 +96,9 @@ def _get_live_classifier() -> RiskClassifier:
         _live_classifier = RiskClassifier(
             model=a.get("model"),
             models=a.get("models"),
-            max_tokens=a.get("max_tokens", 1024),
-            requests_per_minute=0,          # no throttle; concurrent calls
-            max_retries=a.get("max_retries", 3),
+            max_tokens=384,                 # JSON answer is tiny — keep token use low
+            requests_per_minute=0,          # concurrency is capped at the call site instead
+            max_retries=a.get("max_retries", 4),
             target_name=_cfg.get("target", {}).get("name", "the organization"),
         )
     return _live_classifier
@@ -211,7 +211,13 @@ def live(per_channel: int = 3) -> dict[str, Any]:
         random.shuffle(mine)
         picks.extend((ch, rec) for rec in mine[:per_channel])
 
-    clf = _get_live_classifier()
+    # Build the classifier defensively: if it can't be created (e.g. GROQ_API_KEY not
+    # set on the server), don't 500 — fall back to the n8n-provided sentiment.
+    try:
+        clf = _get_live_classifier()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("live classifier unavailable, using sentiment fallback: %s", exc)
+        clf = None
 
     def analyze(pair: tuple[str, dict]) -> dict[str, Any]:
         ch, rec = pair
@@ -229,8 +235,8 @@ def live(per_channel: int = 3) -> dict[str, Any]:
             text=text,
             url=url_v or None,
         )
-        a = clf.classify(post)
-        if a.rationale.startswith("classifier error"):
+        a = clf.classify(post) if clf is not None else None
+        if a is None or a.rationale.startswith("classifier error"):
             # Fallback: derive risk from the n8n-provided sentiment when the LLM is
             # unavailable (e.g. quota). Never leave an item un-categorised.
             if n8n_sent.lower().startswith("neg"):
@@ -273,7 +279,8 @@ def live(per_channel: int = 3) -> dict[str, Any]:
 
     if not picks:
         return {"items": []}
-    with ThreadPoolExecutor(max_workers=min(8, len(picks))) as ex:
+    # Cap concurrency to avoid bursting past Groq's free-tier rate limit (429s).
+    with ThreadPoolExecutor(max_workers=3) as ex:
         items = list(ex.map(analyze, picks))
     return {"items": items}
 

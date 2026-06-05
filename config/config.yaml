@@ -5,10 +5,11 @@ max_items_per_poll: 3           # process only 3 items per channel per scan
 
 # AI risk-analysis core (Gemini)
 analysis:
-  # LLM provider: Groq. Ordered fallback chain (rolls over if a model's quota is hit).
+  # LLM provider: Groq. Ordered fallback chain (rolls over if a model's DAILY quota is hit).
   provider: groq
   models:
-    - llama-3.3-70b-versatile   # primary — all LLM tasks use this
+    - llama-3.3-70b-versatile   # primary
+    - llama-3.1-8b-instant      # fallback — separate, much larger free daily quota
   max_tokens: 1024
   requests_per_minute: 25       # Groq free tier allows ~30 req/min for this model
   max_retries: 3                # retries on 429 (honors the suggested retry delay)
