@@ -8,7 +8,7 @@ function PrudentialLogo() {
     return (
       <div className="logo">
         <img
-          src="/prudential-logo.png"
+          src="/prudential-logo.svg"
           alt="Prudential"
           className="logo-img"
           onError={() => setImgOk(false)}

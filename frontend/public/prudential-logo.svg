@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="232" height="34" viewBox="0 0 232 34" role="img" aria-label="Prudential">
+  <text x="0" y="26"
+        font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
+        font-size="27" font-weight="900" letter-spacing="0.5" fill="#ED1B2E">PRUDENTIAL</text>
+  <!-- stylized red ribbon mark (echoes the Prudential identity) -->
+  <g transform="translate(196,3)">
+    <path d="M0 16C8 4 18 1 28 7c-7-1-13 2-17 8 6-4 12-4 18 0-9-3-17 0-21 7-2-2-5-4-8-6z" fill="#ED1B2E"/>
+    <circle cx="22" cy="8" r="2.3" fill="#ED1B2E"/>
+  </g>
+</svg>
