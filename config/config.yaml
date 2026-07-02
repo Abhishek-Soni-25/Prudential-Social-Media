@@ -43,30 +43,121 @@ thresholds:
   medium_min_confidence: 0.55
   low_min_confidence: 0.40
 
-# Live Reddit + LinkedIn data comes from an n8n agent (Google-search scraping).
+# Keyword-based collection (API Integration Specification). A single keyword is submitted to
+# each provider; these default to the target aliases but can be overridden per channel.
+keywords:
+  - "Prudential Singapore"
+
+# Competitor set for Share-of-Voice benchmarking (PRD 6.6). Each is collected on the
+# channels below with its own keyword, counted and sentiment-scored (no risk mapping).
+competitors:
+  channels: ["linkedin", "instagram", "quora"]   # fast, reliable, no-cookie-timeout channels
+  max_items: 5                                     # keep the competitor pass cheap
+  set:
+    - name: "AIA Singapore"
+      keyword: "AIA Singapore"
+    - name: "Great Eastern"
+      keyword: "Great Eastern Life Singapore"
+    - name: "Income Insurance"
+      keyword: "Income Insurance Singapore"
+    - name: "Manulife Singapore"
+      keyword: "Manulife Singapore"
+
+# Legacy: live Reddit + LinkedIn via an n8n Google-search agent. Superseded by Bright Data /
+# Apify below; kept so `mode: n8n` still works during migration.
 n8n:
   webhook_url: "https://babbumaan.app.n8n.cloud/webhook/420d11f0-a2be-4d23-baf1-ac3aa2ae45ba"
 
+# --- Bright Data Web Scraper (async job model) — YouTube, Reddit, wider web/SERP ---
+# Dataset ids from the API Integration Specification (section 4.2). API key in .env.
+brightdata:
+  poll_timeout_seconds: 300     # Bright Data discovery jobs can take several minutes
+  datasets:
+    reddit_posts:     "gd_lvz8ah06191smkebj4"   # Reddit — discover posts by keyword
+    youtube_videos:   "gd_lk56epmy2i5g7lzu0k"   # YouTube — discover videos by keyword
+    youtube_channels: "gd_lk538t2k2p1k3oos71"   # YouTube — discover channels by keyword
+    # web_serp:       "<dataset_id>"            # Wider web / SERP — add the dataset id
+
+# --- Apify Actors (async actor run) — LinkedIn, Instagram, Telegram, Quora ---
+# Actor ids and input schemas taken from the actor readmes you provided. Each actor is
+# normalised per-platform in src/connectors/apify_connector.py to only the fields we use.
+apify:
+  run_timeout_seconds: 420
+  actors:
+    instagram:                              # crawlerbros/instagram-keyword-search-scraper
+      id: "OQkrGAtl0AfRFKnJr"
+      keyword_field: keywords
+      keyword_as_list: true
+      input_template:
+        maxPosts: 30
+      secret_inputs:                        # actor_input_field: ENV_VAR
+        cookies: INSTAGRAM_SESSION_COOKIES
+    telegram:                               # telegram keyword search scraper
+      id: "kCdMrRb7UiSRSFYeO"
+      keyword_field: keywords
+      keyword_as_list: true
+      input_template:
+        mode: keyword
+        afterDate: "30 days"
+        maxResultsPerKeyword: 30
+    linkedin:                               # harvestapi/linkedin-post-search (No Cookies) — full content
+      id: "buIWk2uOUzTmcLsuB"
+      keyword_field: searchQueries
+      keyword_as_list: true
+      input_template:
+        postedLimit: "3months"
+        sortBy: "date"
+        maxPosts: 30
+        scrapeReactions: false
+        scrapeComments: false
+    quora:                                  # crawlerbros/quora-scraper (searchQuery is a single string)
+      id: "BfPg8oJbuhM5M8h4d"
+      keyword_field: searchQuery
+      keyword_as_list: false
+      input_template:
+        maxQuestions: 20
+        scrapeAnswers: true
+        maxAnswersPerQuestion: 5
+      secret_inputs:
+        cookies: QUORA_SESSION_COOKIES
+
 # Which channels to run and how.
-#   mode: n8n   -> live data pulled from the n8n webhook above (reddit + linkedin)
-#   mode: demo  -> sample pool in data/demo_samples.json; each scan draws 10 at random
+#   mode: brightdata -> Bright Data dataset (keyword discovery)
+#   mode: apify      -> Apify Actor run (keyword search)
+#   mode: live       -> the channel's own official-API connector (e.g. X via tweepy)
+#   mode: n8n        -> legacy n8n webhook (reddit + linkedin)
+#   mode: demo       -> sample pool in data/demo_samples.json
+# A channel is skipped with a warning if its provider credentials are missing in .env.
 channels:
   reddit:
     enabled: true
-    mode: n8n                   # live: 3 Reddit results per scan from the n8n agent
+    mode: brightdata
+    dataset: reddit_posts
+    extra_input:
+      date: "Past month"          # Bright Data reddit discovery requires a date range
+      sort_by: "New"
+  youtube:
+    enabled: true
+    mode: brightdata
+    dataset: youtube_videos
+    extra_input:
+      country: "SG"
+  instagram:
+    enabled: true
+    mode: apify
+    actor: instagram
+  telegram:
+    enabled: true
+    mode: apify
+    actor: telegram
+  quora:
+    enabled: true
+    mode: apify
+    actor: quora
   linkedin:
     enabled: true
-    mode: n8n                   # live: 3 LinkedIn results per scan from the n8n agent
-  # telegram / x / whatsapp / quora are handled ENTIRELY in the frontend now
-  # (50-item pools with pre-baked analysis, 3 drawn at random per scan, never stored).
-  telegram:
-    enabled: false
-  x:
-    enabled: false
-  whatsapp:
-    enabled: false
-  quora:
-    enabled: false
+    mode: apify
+    actor: linkedin
 
 # LinkedIn scraper (ToS-gated). The unofficial linkedin-api library logs in with a real
 # account, which VIOLATES LinkedIn's User Agreement and risks account suspension / legal

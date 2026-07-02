@@ -1,131 +1,127 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import type { CaseFile, Channel } from "./types";
+import type { AuthorActivity, CaseFile, CompetitorSov, Mention } from "./types";
 import { ALL_CHANNELS, computeInsights, computeStats, drawDemoCases } from "./demo";
-import { Header } from "./components/Header";
-import { NavBar } from "./components/NavBar";
-import { ChannelsStrip } from "./components/ChannelsStrip";
-import { StatCards } from "./components/StatCards";
-import { Insights } from "./components/Insights";
-import { CasesTable } from "./components/CasesTable";
+import { mentionToCase } from "./adapters";
+import { Sidebar, type Page } from "./components/Sidebar";
+import { TopBar } from "./components/TopBar";
 import { CaseDrawer } from "./components/CaseDrawer";
+import { Overview } from "./pages/Overview";
+import { Competitors } from "./pages/Competitors";
+import { Reports } from "./pages/Reports";
+import {
+  ListeningOverview, Influencer, CampaignAnalytics, PRDashboard, BrandIntelligence,
+  CompetitiveIntelligence, ContentPerformance, ContentSense, Benchmarking,
+  Publish, BulkActions, Campaign,
+} from "./pages/Pages";
 
-const titleCase = (s: string) => s.replace(/_/g, " ").toLowerCase();
+const REAL_CHANNELS = ["reddit", "youtube", "instagram", "telegram", "quora", "linkedin"];
 
-// All monitored channels (reddit/linkedin are live; the rest run client-side).
-const CHANNELS: Channel[] = ALL_CHANNELS.map((name) => ({
-  name, enabled: true, mode: "live", sources: [],
-}));
+const META: Record<Page, { title: string; sub: string }> = {
+  pinned: { title: "Risk Surveillance Dashboard", sub: "AI monitoring across channels — sentiment & risk mapped to RACM / KRI." },
+  listening_overview: { title: "Listening Overview", sub: "Volume, sentiment and trend for Prudential Singapore." },
+  influencer: { title: "Influencer & UGC", sub: "Top vocal users and the user-generated content driving the conversation." },
+  campaign_analytics: { title: "Campaign Analytics", sub: "Keyword campaign performance and reach by channel." },
+  pr_dashboard: { title: "PR Dashboard", sub: "Reputation risk, negative sentiment and flagged items mapped to RACM / KRI." },
+  brand_intelligence: { title: "Brand Intelligence — Customer Voice", sub: "AI analysis of the topics and opinions in the conversation." },
+  competitive_intelligence: { title: "Competitive Contextual Pulse", sub: "Share of voice — Prudential vs the competitor set." },
+  content_performance: { title: "Content Performance", sub: "Engagement by channel and the top-performing posts." },
+  content_sense: { title: "Content Sense", sub: "Themes, hashtags and word clouds across the conversation." },
+  bench_competition: { title: "Competition Benchmarking", sub: "Share of voice, volume and sentiment vs the competitor set." },
+  bench_content: { title: "Content Benchmarking", sub: "Topic themes in the Prudential conversation." },
+  reports: { title: "Reports & Export", sub: "Generate a full priority-ranked surveillance report, or export CSV." },
+  publish: { title: "Publish & Respond", sub: "Reply to mentions, publish from Prudential's accounts, and track own-post engagement." },
+  bulk: { title: "Bulk Actions", sub: "Select and action many mentions at once, ranked by priority." },
+  campaign: { title: "Keyword Campaigns", sub: "Add your own keywords and review the channels driving collection." },
+};
 
 export default function App() {
-  const [liveCases, setLiveCases] = useState<CaseFile[]>([]);   // reddit + linkedin (n8n)
-  const [demoCases, setDemoCases] = useState<CaseFile[]>([]);   // 4 client-side channels
+  const [page, setPage] = useState<Page>("pinned");
+  const [mentions, setMentions] = useState<Mention[]>([]);
+  const [, setAuthors] = useState<AuthorActivity[]>([]);
+  const [demoCases, setDemoCases] = useState<CaseFile[]>([]);
+  const [sov, setSov] = useState<CompetitorSov | null>(null);
+  const [compScanning, setCompScanning] = useState(false);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<CaseFile | null>(null);
-  const [filters, setFilters] = useState({ severity: "", category: "", channel: "" });
-  const [error, setError] = useState<string | null>(null);
+  const [banner, setBanner] = useState<string | null>(null);
 
-  const combined = useMemo(() => [...liveCases, ...demoCases], [liveCases, demoCases]);
-  const stats = useMemo(() => computeStats(combined), [combined]);
-  const insights = useMemo(() => computeInsights(combined, ALL_CHANNELS), [combined]);
+  const live = mentions.length > 0;
+  const channels = live ? REAL_CHANNELS : ALL_CHANNELS;
+  const cases = useMemo(() => (live ? mentions.map(mentionToCase) : demoCases), [live, mentions, demoCases]);
+  const stats = useMemo(() => computeStats(cases), [cases]);
+  const insights = useMemo(() => computeInsights(cases, channels), [cases, channels]);
 
-  const filtered = useMemo(() => combined.filter((c) => {
-    const sevOk = !filters.severity
-      || c.severity === filters.severity
-      || (filters.severity === "NONE" && c.severity === "LOW"); // "No Risk" folds in LOW
-    return sevOk
-      && (!filters.category || c.risk_category === filters.category)
-      && (!filters.channel || c.platform === filters.channel);
-  }), [combined, filters]);
-
-  // Pull 3 live Reddit + 3 LinkedIn items (fetched & classified on demand, not stored).
-  const fetchLive = useCallback(async () => {
-    setLoading(true);
+  const refresh = useCallback(async () => {
     try {
-      const r = await api.live();
-      setLiveCases(r.items ?? []);
-      setError(r.error ?? null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not reach the live feed (backend :8000).");
-    } finally {
-      setLoading(false);
+      const [m, a, s] = await Promise.all([api.mentions(), api.authors(), api.competitors().catch(() => null)]);
+      setMentions(m ?? []); setAuthors(a ?? []); if (s) setSov(s);
+      setBanner(m && m.length ? null : "No stored mentions yet — showing prototype data. Click “Run Scan”.");
+    } catch {
+      setBanner("Backend (:8000) unreachable — showing prototype data.");
     }
   }, []);
 
-  // Initial load: draw demo alerts instantly + fetch the live feed.
-  useEffect(() => {
-    setDemoCases(drawDemoCases());
-    fetchLive();
-  }, [fetchLive]);
+  useEffect(() => { setDemoCases(drawDemoCases()); refresh(); }, [refresh]);
 
-  const runScan = () => {
-    setDemoCases(drawDemoCases());  // fresh random 3 / demo channel (instant, client-side)
-    fetchLive();                    // fresh random 3 / live channel (Reddit + LinkedIn)
-  };
+  const runScan = useCallback(async () => {
+    if (!window.confirm("Run a fresh scan? This calls Bright Data + Apify + Groq and is billable.")) return;
+    setLoading(true);
+    try {
+      await api.startScan();
+      for (let i = 0; i < 60; i++) { await new Promise((r) => setTimeout(r, 4000)); const s = await api.scanStatus(); await refresh(); if (!s.running) break; }
+    } catch { /* ignore */ } finally { setLoading(false); await refresh(); }
+  }, [refresh]);
 
-  const categories = Object.keys(stats.by_category);
+  const runCompetitorScan = useCallback(async () => {
+    if (!window.confirm("Collect competitor mentions (AIA, Great Eastern, Income, Manulife)? Billable.")) return;
+    setCompScanning(true);
+    try {
+      await api.startCompetitorScan();
+      for (let i = 0; i < 90; i++) { await new Promise((r) => setTimeout(r, 4000)); const s = await api.scanStatus(); setSov(await api.competitors().catch(() => null)); if (!s.running) break; }
+    } catch { /* ignore */ } finally { setCompScanning(false); setSov(await api.competitors().catch(() => null)); }
+  }, []);
+
+  const meta = META[page];
+  const sel = setSelected;
 
   return (
-    <div>
-      <Header running={loading} onScan={runScan} />
-      <NavBar
-        active={filters.severity as "" | "HIGH" | "MEDIUM" | "NONE"}
-        onSelect={(s) => setFilters((f) => ({ ...f, severity: s }))}
-        stats={stats}
-      />
+    <div className="shell">
+      <Sidebar active={page} onNav={setPage} />
+      <div className="content">
+        <TopBar title={meta.title} subtitle={meta.sub} count={mentions.length} running={loading} live={live} onScan={runScan} />
+        <main className="page">
+          {banner && <div className="banner banner-info">ℹ {banner}</div>}
 
-      <main className="main">
-        <div className="page-head">
-          <h2>Risk Surveillance Dashboard</h2>
-          <div className="sub">
-            Prudential Singapore · responsible-AI monitoring across {CHANNELS.length} channels for
-            reputational, compliance, market-abuse &amp; cyber risk — mapped to RACM / KRI.
+          {page === "pinned" && <Overview stats={stats} insights={insights} mentions={mentions} cases={cases} onSelect={sel} />}
+          {page === "listening_overview" && <ListeningOverview mentions={mentions} cases={cases} onSelect={sel} />}
+          {page === "influencer" && <Influencer mentions={mentions} />}
+          {page === "campaign_analytics" && <CampaignAnalytics mentions={mentions} />}
+          {page === "pr_dashboard" && <PRDashboard mentions={mentions} cases={cases} stats={stats} onSelect={sel} />}
+          {page === "brand_intelligence" && <BrandIntelligence mentions={mentions} />}
+          {page === "competitive_intelligence" && (
+            <>
+              <CompetitiveIntelligence mentions={mentions} sov={sov} />
+              <div style={{ marginTop: 16 }}>
+                <Competitors mentions={mentions} sov={sov} onScan={runCompetitorScan} scanning={compScanning} />
+              </div>
+            </>
+          )}
+          {page === "content_performance" && <ContentPerformance mentions={mentions} />}
+          {page === "content_sense" && <ContentSense mentions={mentions} />}
+          {page === "bench_competition" && <Benchmarking mentions={mentions} sov={sov} kind="competition" />}
+          {page === "bench_content" && <Benchmarking mentions={mentions} sov={sov} kind="content" />}
+          {page === "reports" && <Reports stats={stats} mentions={mentions} />}
+          {page === "publish" && <Publish mentions={mentions} cases={cases} />}
+          {page === "bulk" && <BulkActions cases={cases} />}
+          {page === "campaign" && <Campaign mentions={mentions} />}
+
+          <div className="footnote">
+            Monitors public &amp; legally authorized channels only · PII pseudonymized · PDPA / GDPR.
+            Data stored from the last scan — re-scan is manual to control provider cost.
           </div>
-        </div>
-
-        {error && <div className="banner banner-info">ℹ Live feed: {error}</div>}
-        {(stats.by_severity.HIGH ?? 0) > 0 && (
-          <div className="banner banner-error">
-            🚨 {stats.by_severity.HIGH} high-severity alert
-            {(stats.by_severity.HIGH ?? 0) > 1 ? "s" : ""} on negative / abusive content about
-            Prudential Singapore require immediate review.
-          </div>
-        )}
-
-        <StatCards stats={stats} />
-
-        <Insights d={insights} />
-
-        <ChannelsStrip channels={CHANNELS} />
-
-        <div className="panel">
-          <div className="panel-head">
-            <h3>Analysed content</h3>
-            <div className="filters">
-              <select value={filters.category} onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}>
-                <option value="">All categories</option>
-                {categories.map((c) => (
-                  <option key={c} value={c}>{titleCase(c)}</option>
-                ))}
-              </select>
-              <select value={filters.channel} onChange={(e) => setFilters((f) => ({ ...f, channel: e.target.value }))}>
-                <option value="">All channels</option>
-                {CHANNELS.map((c) => (
-                  <option key={c.name} value={c.name}>{c.name}</option>
-                ))}
-              </select>
-              <span className="count">{filtered.length} shown{loading ? " · refreshing live…" : ""}</span>
-            </div>
-          </div>
-          <CasesTable cases={filtered} onSelect={setSelected} />
-        </div>
-
-        <div className="footnote">
-          Monitors public &amp; legally authorized channels only · PII pseudonymized · adheres to
-          jurisdictional privacy obligations (PDPA / GDPR). For internal compliance use.
-        </div>
-      </main>
-
+        </main>
+      </div>
       {selected && <CaseDrawer c={selected} onClose={() => setSelected(null)} />}
     </div>
   );

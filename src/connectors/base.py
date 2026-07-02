@@ -26,10 +26,13 @@ class BaseConnector(ABC):
 
     channel: str = "base"
 
-    def __init__(self, sources: list[str], max_items: int = 25) -> None:
+    def __init__(self, sources: list[str], max_items: int = 25,
+                 state_key: str | None = None) -> None:
         self.sources = sources or []
         self.max_items = max_items
-        self._state_path = STATE_DIR / f"{self.channel}.json"
+        # state_key isolates cursor storage so parallel keyword sets (e.g. competitor
+        # collection) don't dedupe against each other or against the main scan.
+        self._state_path = STATE_DIR / f"{state_key or self.channel}.json"
         self._cursors: dict[str, str] = self._load_state()
 
     # --- cursor helpers ------------------------------------------------------

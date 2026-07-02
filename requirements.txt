@@ -4,7 +4,7 @@ fastapi>=0.110.0          # backend API serving the React dashboard
 uvicorn[standard]>=0.29.0 # ASGI server
 pyyaml>=6.0               # config.yaml
 python-dotenv>=1.0.0      # .env secrets
-# (live Reddit/LinkedIn come from the n8n webhook via stdlib urllib — no extra dep)
+# (Bright Data + Apify connectors use the stdlib urllib — no extra dependency)
 
 # ── Optional — only needed if you switch a channel to a real live connector ───
 telethon>=1.36.0          # Telegram (mode: live)

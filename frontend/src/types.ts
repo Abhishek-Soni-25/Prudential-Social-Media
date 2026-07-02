@@ -29,11 +29,58 @@ export interface Stats {
   latest: string | null;
 }
 
+// A single analysed item from the real Bright Data / Apify pipeline (/api/mentions).
+export interface Mention {
+  id: string;
+  platform: string;
+  provider: string | null;
+  author: string;
+  author_url: string | null;
+  url: string | null;              // permalink — click to open & verify
+  text: string;
+  keyword: string | null;
+  engagement: Record<string, number>;
+  sentiment: "positive" | "neutral" | "negative";
+  risk_category: string;
+  severity: Severity;
+  confidence: number;
+  rationale: string;
+  indicators: string[];
+  timestamp: string;
+  analysed_at: string;
+}
+
+// Per-account activity (/api/authors) — how many times an account posted about the keyword.
+export interface AuthorActivity {
+  author: string;
+  platform: string;
+  author_url: string | null;
+  posts: number;
+  negative: number;
+  neutral: number;
+  positive: number;
+  flagged: number;
+  latest_url: string | null;
+  latest_at: string;
+}
+
 export interface Channel {
   name: string;
   enabled: boolean;
   mode: "live" | "demo";
   sources: string[];
+}
+
+export interface SovEntry {
+  total: number;
+  positive: number;
+  neutral: number;
+  negative: number;
+  by_platform: Record<string, number>;
+}
+export interface CompetitorSov {
+  prudential: SovEntry;
+  competitors: Record<string, SovEntry>;
 }
 
 export interface ScanStatus {

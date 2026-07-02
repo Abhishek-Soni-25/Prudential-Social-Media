@@ -30,6 +30,10 @@ from .config import load_config, CASES_DIR, PROJECT_ROOT
 from .connectors import CONNECTOR_REGISTRY, ConnectorUnavailable, DemoConnector
 from .connectors.n8n_connector import _fetch as _n8n_fetch, _channel_of, _author_from_url
 from .models import Post
+from . import mentions as mentions_store
+from . import competitors as competitors_store
+from . import keywords as keywords_store
+from . import publish as publish_store
 from .pipeline.risk_classifier import RiskClassifier
 from .escalation import Escalation
 from . import main as pipeline_main
@@ -191,6 +195,37 @@ def channels() -> list[dict[str, Any]]:
     return out
 
 
+@app.get("/api/mentions")
+def mentions(
+    platform: Optional[str] = Query(None),
+    sentiment: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+) -> list[dict[str, Any]]:
+    """Every analysed item (newest first) — the primary feed. Each carries its permalink
+    (`url`) so it can be opened for verification, the account handle, and Groq sentiment."""
+    items = mentions_store.load_mentions()
+    if platform:
+        items = [m for m in items if m.get("platform") == platform.lower()]
+    if sentiment:
+        items = [m for m in items if m.get("sentiment") == sentiment.lower()]
+    if severity:
+        items = [m for m in items if m.get("severity") == severity.upper()]
+    return items
+
+
+@app.get("/api/authors")
+def authors(platform: Optional[str] = Query(None)) -> list[dict[str, Any]]:
+    """Per-account activity: how many times each account posted about the keyword, with a
+    sentiment split and a link to their latest post for verification."""
+    return mentions_store.author_activity(platform)
+
+
+@app.get("/api/sentiment")
+def sentiment_by_platform() -> dict[str, dict[str, int]]:
+    """Sentiment breakdown (positive / neutral / negative) per platform."""
+    return mentions_store.platform_sentiment()
+
+
 @app.get("/api/live")
 def live(per_channel: int = 3) -> dict[str, Any]:
     """Fetch the n8n webhook, draw `per_channel` Reddit + LinkedIn items at random, and
@@ -325,6 +360,61 @@ def scan() -> dict[str, Any]:
 
     threading.Thread(target=_run, daemon=True).start()
     return {"started": True}
+
+
+@app.get("/api/competitors")
+def competitors() -> dict[str, Any]:
+    """Stored competitor Share-of-Voice (Prudential vs the competitor set)."""
+    return competitors_store.load_competitor_sov()
+
+
+@app.post("/api/scan/competitors")
+def scan_competitors() -> dict[str, Any]:
+    """Trigger a competitor Share-of-Voice collection in the background."""
+    if _scan_state["running"]:
+        return {"started": False, "reason": "a scan is already running"}
+
+    def _run() -> None:
+        with _scan_lock:
+            _scan_state["running"] = True
+            _scan_state["error"] = None
+            try:
+                competitors_store.run_competitor_scan(_cfg, _get_classifier())
+                _scan_state["last_run"] = datetime.now(timezone.utc).isoformat()
+            except Exception as exc:  # noqa: BLE001
+                _scan_state["error"] = str(exc)
+                log.exception("competitor scan failed")
+            finally:
+                _scan_state["running"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"started": True}
+
+
+@app.get("/api/keywords")
+def get_keywords() -> dict[str, Any]:
+    return {"base": _cfg.get("keywords", []), "custom": keywords_store.load_custom()}
+
+
+@app.post("/api/keywords")
+def set_keywords(body: dict[str, Any]) -> dict[str, Any]:
+    saved = keywords_store.save_custom(body.get("custom", []))
+    return {"base": _cfg.get("keywords", []), "custom": saved}
+
+
+@app.post("/api/publish/reply")
+def publish_reply(body: dict[str, Any]) -> dict[str, Any]:
+    return publish_store.record("reply", body)
+
+
+@app.post("/api/publish/post")
+def publish_post(body: dict[str, Any]) -> dict[str, Any]:
+    return publish_store.record("post", body)
+
+
+@app.get("/api/publish/outbox")
+def publish_outbox() -> list[dict[str, Any]]:
+    return publish_store.load_outbox()
 
 
 # --- Serve the built React frontend (single-container deploy on Cloud Run) ----------

@@ -16,13 +16,33 @@ import logging
 import time
 
 from .config import load_config
-from .connectors import CONNECTOR_REGISTRY, ConnectorUnavailable, DemoConnector, N8nConnector
+from .connectors import (
+    CONNECTOR_REGISTRY,
+    ConnectorUnavailable,
+    DemoConnector,
+    N8nConnector,
+    BrightDataConnector,
+    ApifyConnector,
+)
 from .pipeline import ingest, sentiment as sentiment_mod, alerting, relevance
 from .pipeline.risk_classifier import RiskClassifier
 from . import case_management
+from . import mentions as mentions_store
 from .escalation import Escalation
 
 log = logging.getLogger("surveillance")
+
+
+def _keywords_for(ch_cfg: dict, cfg: dict) -> list[str]:
+    """Per-channel keywords, or the shared default keyword list, or the target aliases —
+    always merged with user-added custom keywords from the Campaign page."""
+    from . import keywords as kw_store
+    base = (
+        ch_cfg.get("keywords")
+        or cfg.get("keywords")
+        or cfg.get("target", {}).get("aliases", [])
+    )
+    return kw_store.merged(base)
 
 
 def build_connectors(cfg: dict):
@@ -41,6 +61,33 @@ def build_connectors(cfg: dict):
                 channel=name,
                 webhook_url=cfg.get("n8n", {}).get("webhook_url", ""),
                 max_items=max_items,
+            )
+        elif mode == "brightdata":
+            bd = cfg.get("brightdata", {})
+            dataset_key = ch_cfg.get("dataset", name)
+            connector = BrightDataConnector(
+                channel=name,
+                dataset_id=bd.get("datasets", {}).get(dataset_key, ""),
+                keywords=_keywords_for(ch_cfg, cfg),
+                keyword_field=ch_cfg.get("keyword_field", "keyword"),
+                extra_input=ch_cfg.get("extra_input", {}),
+                max_items=max_items,
+                poll_timeout=bd.get("poll_timeout_seconds", 180),
+            )
+        elif mode == "apify":
+            ap = cfg.get("apify", {})
+            actor_key = ch_cfg.get("actor", name)
+            actor_cfg = ap.get("actors", {}).get(actor_key, {})
+            connector = ApifyConnector(
+                channel=name,
+                actor_id=actor_cfg.get("id", ""),
+                keywords=_keywords_for(ch_cfg, cfg),
+                keyword_field=actor_cfg.get("keyword_field", "keywords"),
+                keyword_as_list=actor_cfg.get("keyword_as_list", True),
+                input_template=actor_cfg.get("input_template", {}),
+                secret_inputs=actor_cfg.get("secret_inputs", {}),
+                max_items=max_items,
+                timeout=ap.get("run_timeout_seconds", 300),
             )
         else:
             cls = CONNECTOR_REGISTRY.get(name)
@@ -93,6 +140,9 @@ def run_cycle(connectors, classifier, escalation, cfg) -> dict:
             # carried for context and could gate cost in a higher-volume deployment.)
             assessment = classifier.classify(cleaned)
             stats["analyzed"] += 1
+
+            # Log every analysed item (powers per-platform sentiment + per-account counts).
+            mentions_store.record_mention(cleaned, assessment)
 
             tier = alerting.decide_alert(assessment, thresholds)
             stats[tier] = stats.get(tier, 0) + 1

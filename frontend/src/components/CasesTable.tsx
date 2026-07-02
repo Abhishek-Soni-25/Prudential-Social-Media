@@ -28,6 +28,7 @@ export function CasesTable({
           <th>Rationale</th>
           <th>Confidence</th>
           <th>Detected</th>
+          <th>Source</th>
         </tr>
       </thead>
       <tbody>
@@ -40,6 +41,21 @@ export function CasesTable({
             <td className="rationale-cell">{c.rationale}</td>
             <td><ConfidenceBar value={c.confidence} /></td>
             <td className="muted">{fmtTime(c.created_at)}</td>
+            <td>
+              {c.url ? (
+                <a
+                  className="link"
+                  href={c.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  Open ↗
+                </a>
+              ) : (
+                <span className="muted">—</span>
+              )}
+            </td>
           </tr>
         ))}
       </tbody>

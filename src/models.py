@@ -62,6 +62,7 @@ class RiskAssessment:
     confidence: float       # 0.0 .. 1.0
     rationale: str
     indicators: list[str] = field(default_factory=list)
+    sentiment: str = "neutral"   # positive | neutral | negative (Groq, per PRD 6.2)
 
 
 # --- Case file ---------------------------------------------------------------

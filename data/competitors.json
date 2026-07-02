@@ -1,0 +1,58 @@
+{
+  "prudential": {
+    "total": 26,
+    "positive": 15,
+    "neutral": 10,
+    "negative": 1,
+    "by_platform": {
+      "linkedin": 8,
+      "quora": 6,
+      "instagram": 6,
+      "reddit": 3,
+      "youtube": 3
+    }
+  },
+  "competitors": {
+    "AIA Singapore": {
+      "total": 15,
+      "positive": 4,
+      "neutral": 11,
+      "negative": 0,
+      "by_platform": {
+        "linkedin": 5,
+        "instagram": 5,
+        "quora": 5
+      }
+    },
+    "Great Eastern": {
+      "total": 5,
+      "positive": 3,
+      "neutral": 2,
+      "negative": 0,
+      "by_platform": {
+        "linkedin": 5
+      }
+    },
+    "Income Insurance": {
+      "total": 15,
+      "positive": 1,
+      "neutral": 12,
+      "negative": 2,
+      "by_platform": {
+        "linkedin": 5,
+        "instagram": 5,
+        "quora": 5
+      }
+    },
+    "Manulife Singapore": {
+      "total": 10,
+      "positive": 3,
+      "neutral": 7,
+      "negative": 0,
+      "by_platform": {
+        "linkedin": 5,
+        "instagram": 5
+      }
+    }
+  }
+}

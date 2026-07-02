@@ -78,12 +78,17 @@ export function CaseDrawer({ c, onClose }: { c: CaseFile; onClose: () => void })
           </div>
 
           <div className="field">
-            <div className="lbl">Source content</div>
+            <div className="lbl">Original post</div>
             <div className="val">
               {c.url ? (
-                <a className="link" href={c.url} target="_blank" rel="noreferrer">{c.url}</a>
+                <>
+                  <a className="open-post-btn" href={c.url} target="_blank" rel="noreferrer">
+                    Open original post ↗
+                  </a>
+                  <div className="mono muted" style={{ marginTop: 6, wordBreak: "break-all" }}>{c.url}</div>
+                </>
               ) : (
-                <span className="muted">n/a</span>
+                <span className="muted">No public link available for this item.</span>
               )}
             </div>
           </div>

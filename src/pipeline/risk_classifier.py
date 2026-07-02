@@ -57,9 +57,14 @@ false positives.
 - Only assign HIGH when the evidence in the text genuinely supports immediate action.
 - Ground your rationale in specific wording from the content. Do not invent facts.
 
+SENTIMENT: also judge the overall sentiment the content expresses TOWARD {ORG}: \
+"positive", "neutral", or "negative". This is independent of risk — praise is positive, \
+factual/news is neutral, criticism/complaints/abuse are negative.
+
 OUTPUT: respond with ONLY a JSON object matching this schema:
 {"is_risk": boolean, "category": one of [REPUTATIONAL, COMPLIANCE_CONDUCT, MARKET_ABUSE, \
 CYBER_OPERATIONAL, NONE], "severity": one of [HIGH, MEDIUM, LOW, NONE], \
+"sentiment": one of [positive, neutral, negative], \
 "confidence": number between 0 and 1, "rationale": "short, grounded explanation", \
 "indicators": ["matched signal", ...]}
 If is_risk is false, category and severity must both be "NONE"."""
@@ -89,12 +94,57 @@ class RiskClassifier:
         self._max_retries = max_retries
         self._last_call = 0.0
         self._exhausted: set[str] = set()
-        api_key = env("GROQ_API_KEY", required=True)
+        # One or more Groq API keys. Rotating across keys multiplies the free-tier daily
+        # quota: GROQ_API_KEY (primary) plus optional GROQ_API_KEY_2, _3, ... and/or a
+        # comma-separated GROQ_API_KEYS. When every model is exhausted on the current key
+        # we advance to the next key and reset the exhausted-model set.
+        self._keys = self._collect_keys()
+        if not self._keys:
+            raise RuntimeError(
+                "No Groq API key found. Set GROQ_API_KEY (and optionally GROQ_API_KEY_2, "
+                "GROQ_API_KEY_3 or GROQ_API_KEYS) in .env."
+            )
+        self._key_idx = 0
         try:
             from groq import Groq
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("groq not installed; pip install groq") from exc
-        self._client = Groq(api_key=api_key)
+        self._Groq = Groq
+        self._client = Groq(api_key=self._keys[0])
+
+    @staticmethod
+    def _collect_keys() -> list[str]:
+        keys: list[str] = []
+        primary = env("GROQ_API_KEY")
+        if primary:
+            keys.append(primary.strip())
+        for extra in (env("GROQ_API_KEYS") or "").split(","):
+            extra = extra.strip()
+            if extra and extra not in keys:
+                keys.append(extra)
+        idx = 2
+        while True:
+            k = env(f"GROQ_API_KEY_{idx}")
+            if not k:
+                break
+            k = k.strip()
+            if k and k not in keys:
+                keys.append(k)
+            idx += 1
+        return keys
+
+    def _rotate_key(self) -> bool:
+        """Advance to the next API key, resetting exhausted models. False if none left."""
+        if self._key_idx + 1 >= len(self._keys):
+            return False
+        self._key_idx += 1
+        self._client = self._Groq(api_key=self._keys[self._key_idx])
+        self._exhausted.clear()
+        log.warning(
+            "Rotating to Groq API key #%d of %d (previous key's quota exhausted).",
+            self._key_idx + 1, len(self._keys),
+        )
+        return True
 
     @property
     def active_model(self) -> str | None:
@@ -162,7 +212,11 @@ class RiskClassifier:
                         log.warning("Model '%s' daily quota hit; falling back to '%s'.", model, nxt)
                         attempt = 0
                         continue
-                    log.error("All models exhausted (last: '%s').", model)
+                    # Every model exhausted on this key — try the next API key.
+                    if self._rotate_key():
+                        attempt = 0
+                        continue
+                    log.error("All models exhausted on all API keys (last: '%s').", model)
                     raise
                 if self._is_rate_limit(exc) and attempt < self._max_retries:
                     delay = self._retry_delay(exc, attempt)
@@ -211,6 +265,10 @@ class RiskClassifier:
         confidence = float(data.get("confidence", 0.0))
         confidence = max(0.0, min(1.0, confidence))
 
+        sentiment = str(data.get("sentiment", "neutral")).lower()
+        if sentiment not in ("positive", "neutral", "negative"):
+            sentiment = "neutral"
+
         return RiskAssessment(
             is_risk=is_risk,
             category=category,
@@ -218,4 +276,5 @@ class RiskClassifier:
             confidence=round(confidence, 3),
             rationale=str(data.get("rationale", "")).strip(),
             indicators=[str(i) for i in data.get("indicators", [])][:10],
+            sentiment=sentiment,
         )

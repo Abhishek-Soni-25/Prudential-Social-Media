@@ -1,4 +1,4 @@
-import type { CaseFile, Channel, ScanStatus, Stats } from "./types";
+import type { AuthorActivity, CaseFile, Channel, CompetitorSov, Mention, ScanStatus, Stats } from "./types";
 
 const BASE = "/api";
 
@@ -18,6 +18,33 @@ export const api = {
     return get<CaseFile[]>(`/cases${qs ? `?${qs}` : ""}`);
   },
   channels: () => get<Channel[]>("/channels"),
+  mentions: (filters: Partial<Record<"platform" | "sentiment" | "severity", string>> = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(filters).forEach(([k, v]) => v && q.set(k, v));
+    const qs = q.toString();
+    return get<Mention[]>(`/mentions${qs ? `?${qs}` : ""}`);
+  },
+  authors: (platform = "") =>
+    get<AuthorActivity[]>(`/authors${platform ? `?platform=${platform}` : ""}`),
+  sentiment: () => get<Record<string, Record<string, number>>>("/sentiment"),
+  competitors: () => get<CompetitorSov>("/competitors"),
+  keywords: () => get<{ base: string[]; custom: string[] }>("/keywords"),
+  saveKeywords: async (custom: string[]) => {
+    const res = await fetch(`${BASE}/keywords`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ custom }) });
+    return res.json() as Promise<{ base: string[]; custom: string[] }>;
+  },
+  publishReply: async (payload: Record<string, unknown>) => {
+    const res = await fetch(`${BASE}/publish/reply`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    return res.json();
+  },
+  publishPost: async (payload: Record<string, unknown>) => {
+    const res = await fetch(`${BASE}/publish/post`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    return res.json();
+  },
+  startCompetitorScan: async (): Promise<{ started: boolean; reason?: string }> => {
+    const res = await fetch(`${BASE}/scan/competitors`, { method: "POST" });
+    return res.json();
+  },
   live: () => get<{ items: CaseFile[]; error?: string }>("/live"),
   scanStatus: () => get<ScanStatus>("/scan/status"),
   startScan: async (): Promise<{ started: boolean; reason?: string }> => {
