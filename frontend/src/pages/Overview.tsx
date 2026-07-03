@@ -3,7 +3,8 @@ import type { Insights as InsightsData } from "../demo";
 import { StatCards } from "../components/StatCards";
 import { Insights } from "../components/Insights";
 import { SentimentByPlatform } from "../components/SentimentByPlatform";
-import { BarList, TrendColumns } from "../components/Charts";
+import { BarList } from "../components/Charts";
+import { StackedTrend } from "../components/ReportViz";
 import { engagementByPlatform, sentimentTrend, platformColor } from "../analytics";
 import { CasesTable } from "../components/CasesTable";
 
@@ -31,8 +32,8 @@ export function Overview({
         </div>
       </div>
       <div className="panel" style={{ marginBottom: 22 }}>
-        <div className="panel-head"><h3>Sentiment trend over time</h3><span className="count">daily volume by sentiment</span></div>
-        <div className="panel-body"><TrendColumns data={sentimentTrend(mentions)} /></div>
+        <div className="panel-head"><h3>Sentiment trend over time</h3><span className="count">daily mentions stacked by sentiment · hover for the breakdown</span></div>
+        <div className="panel-body"><StackedTrend data={sentimentTrend(mentions)} /></div>
       </div>
       <div className="panel">
         <div className="panel-head">

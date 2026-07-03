@@ -66,15 +66,20 @@ export function Insights({ d }: { d: InsightsData }) {
           <div className="panel-head"><h3>Alerts by risk category</h3></div>
           <div className="panel-body">
             {d.categories.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No alerts.</div>}
-            {d.categories.map((c) => (
-              <div className="bar-row" key={c.name}>
-                <span className="bar-label">{cap(c.name)}</span>
-                <span className="bar-track">
-                  <span className="bar-fill" style={{ width: `${(c.count / catMax) * 100}%`, background: CAT_COLOR[c.name] ?? "var(--brand)" }} />
-                </span>
-                <span className="bar-val">{c.count}</span>
-              </div>
-            ))}
+            <div className="hbars">
+              {d.categories.map((c) => {
+                const col = CAT_COLOR[c.name] ?? "var(--brand)";
+                return (
+                  <div className="hbar" key={c.name}>
+                    <span className="hbar-name">{cap(c.name)}</span>
+                    <span className="hbar-track" style={{ background: `${col}1f` }}>
+                      <span className="hbar-fill" style={{ width: `${Math.max(6, (c.count / catMax) * 100)}%`, background: `linear-gradient(90deg, ${col}, ${col}bb)` }} />
+                    </span>
+                    <span className="hbar-num" style={{ color: col }}>{c.count}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -82,17 +87,22 @@ export function Insights({ d }: { d: InsightsData }) {
         <div className="panel">
           <div className="panel-head"><h3>Channel risk</h3></div>
           <div className="panel-body">
-            {d.channelRisk.map((c) => (
-              <div className="bar-row" key={c.name}>
-                <span className="bar-label cap" style={{ width: 78 }}>{c.name}</span>
-                <span className="bar-track">
-                  <span className="bar-fill" style={{ width: `${c.total ? (c.alerts / c.total) * 100 : 0}%`, background: c.alerts ? "var(--high)" : "#e7e9ee" }} />
-                </span>
-                <span className="bar-val" style={{ color: c.alerts ? "var(--high)" : "var(--ink-faint)" }}>
-                  {c.alerts}<span className="muted" style={{ fontWeight: 400 }}>/{c.total}</span>
-                </span>
-              </div>
-            ))}
+            <div className="hbars">
+              {d.channelRisk.map((c) => {
+                const col = c.alerts ? "var(--high)" : "#5b6cf0";
+                return (
+                  <div className="hbar" key={c.name}>
+                    <span className="hbar-name cap" style={{ width: 90 }}>{c.name}</span>
+                    <span className="hbar-track" style={{ background: c.alerts ? "#fbe4e6" : "#eef1fb" }}>
+                      <span className="hbar-fill" style={{ width: `${c.total ? Math.max(6, (c.alerts / c.total) * 100) : 6}%`, background: `linear-gradient(90deg, ${col}, ${col}bb)`, opacity: c.alerts ? 1 : 0.4 }} />
+                    </span>
+                    <span className="hbar-num" style={{ color: c.alerts ? "var(--high)" : "var(--ink-soft)" }}>
+                      {c.alerts}<span className="muted" style={{ fontWeight: 400 }}>/{c.total}</span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>

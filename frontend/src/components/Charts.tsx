@@ -1,5 +1,6 @@
 import type { Slice } from "../analytics";
 import { platformColor } from "../analytics";
+import { wordCloudLayout } from "../chartSvg";
 
 // A lightweight SVG donut chart — no chart library needed.
 export function Donut({ data, colorFor, size = 190 }: {
@@ -44,24 +45,27 @@ export function Donut({ data, colorFor, size = 190 }: {
   );
 }
 
-// Horizontal bar list.
+// Horizontal bar list — polished: gradient fills, rounded, value chip, clean rows.
 export function BarList({ data, colorFor, unit }: {
   data: Slice[]; colorFor?: (name: string) => string; unit?: string;
 }) {
   const max = Math.max(1, ...data.map((d) => d.value));
-  const color = colorFor ?? (() => "var(--pru-red)");
+  const color = colorFor ?? (() => "#5b6cf0");
   if (data.length === 0) return <div className="muted" style={{ fontSize: 13 }}>No data.</div>;
   return (
-    <div>
-      {data.map((d) => (
-        <div className="bar-row" key={d.name}>
-          <span className="bar-label cap" style={{ width: 120 }}>{d.name.replace(/_/g, " ").toLowerCase()}</span>
-          <span className="bar-track">
-            <span className="bar-fill" style={{ width: `${(d.value / max) * 100}%`, background: color(d.name) }} />
-          </span>
-          <span className="bar-val">{d.value.toLocaleString()}{unit ? ` ${unit}` : ""}</span>
-        </div>
-      ))}
+    <div className="hbars">
+      {data.map((d) => {
+        const c = color(d.name);
+        return (
+          <div className="hbar" key={d.name}>
+            <span className="hbar-name cap">{d.name.replace(/_/g, " ").toLowerCase()}</span>
+            <span className="hbar-track">
+              <span className="hbar-fill" style={{ width: `${Math.max(d.value ? 4 : 0, (d.value / max) * 100)}%`, background: `linear-gradient(90deg, ${c}, ${c}bb)` }} />
+            </span>
+            <span className="hbar-num">{d.value.toLocaleString()}{unit ? ` ${unit}` : ""}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -88,22 +92,21 @@ export function TrendColumns({ data }: {
   );
 }
 
-// Word cloud — font size scaled by frequency.
+// Word cloud — circular spiral layout, colourful, hover-highlights.
 export function WordCloud({ data }: { data: Slice[] }) {
-  const max = Math.max(1, ...data.map((d) => d.value));
   if (data.length === 0) return <div className="muted" style={{ fontSize: 13 }}>Not enough text yet.</div>;
+  const W = 620, H = 340;
+  const nodes = wordCloudLayout(data, W, H);
+  const byName = new Map(data.map((d) => [d.name, d.value]));
   return (
-    <div className="wordcloud">
-      {data.map((d) => {
-        const size = 12 + Math.round((d.value / max) * 24);
-        const weight = d.value / max > 0.5 ? 800 : 600;
-        return (
-          <span key={d.name} className="wc-word"
-            style={{ fontSize: size, fontWeight: weight, opacity: 0.55 + (d.value / max) * 0.45 }}>
-            {d.name}
-          </span>
-        );
-      })}
-    </div>
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block", maxWidth: 660, margin: "0 auto" }}>
+      {nodes.map((p) => (
+        <text key={p.name} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle"
+          fontSize={p.size} fontWeight={p.weight} fill={p.color} className="wc-svg-word">
+          <title>{`${p.name} · ${byName.get(p.name)}`}</title>
+          {p.name}
+        </text>
+      ))}
+    </svg>
   );
 }

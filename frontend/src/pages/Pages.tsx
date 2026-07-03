@@ -5,10 +5,13 @@ import {
   engagementByPlatform, riskByCategory, sentimentTrend, shareOfVoice,
   topHashtags, wordCloud, topics, topicMentions, vocalUsers, platformColor,
 } from "../analytics";
-import { BarList, Donut, TrendColumns, WordCloud } from "../components/Charts";
+import { BarList, TrendColumns, WordCloud } from "../components/Charts";
+import { PieChart } from "../components/Pie";
 import { BubbleCluster, Treemap, VocalUsers, SovSummary } from "../components/Viz";
 import { CasesTable } from "../components/CasesTable";
 import { SentimentByPlatform } from "../components/SentimentByPlatform";
+import { MetricDrawer, type MetricDetail } from "../components/MetricDrawer";
+import { TopicComparisonNetwork } from "../components/NetworkGraph";
 
 const CAT_COLOR: Record<string, string> = {
   REPUTATIONAL: "#ED1B2E", COMPLIANCE_CONDUCT: "#d97706", MARKET_ABUSE: "#7c3aed", CYBER_OPERATIONAL: "#2563eb",
@@ -27,8 +30,13 @@ export function Tabs({ tabs, active, onChange }: { tabs: string[]; active: strin
 const Panel = ({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) => (
   <div className="panel"><div className="panel-head"><h3>{title}</h3>{right}</div><div className="panel-body">{children}</div></div>
 );
-const Kpi = ({ k, v, accent }: { k: string; v: number | string; accent: string }) => (
-  <div className="card"><div className="k"><span className="accent" style={{ background: accent }} />{k}</div><div className="v" style={{ color: accent }}>{v}</div></div>
+const Kpi = ({ k, v, accent, sub, onClick }: { k: string; v: number | string; accent: string; sub?: string; onClick?: () => void }) => (
+  <div className={`card ${onClick ? "card-click" : ""}`} onClick={onClick}>
+    <div className="k"><span className="accent" style={{ background: accent }} />{k}</div>
+    <div className="v" style={{ color: accent }}>{v}</div>
+    {sub && <div className="ic-sub">{sub}</div>}
+    {onClick && <div className="card-more">View detail →</div>}
+  </div>
 );
 
 /* ---------------- Listening Overview (no SoV donut here) ---------------- */
@@ -116,7 +124,7 @@ export function PRDashboard({ mentions, cases, stats, onSelect }: { mentions: Me
       </div>
       <div className="grid2">
         <Panel title="Reputation risk by category"><BarList data={riskByCategory(mentions)} colorFor={(n) => CAT_COLOR[n] ?? "var(--pru-red)"} /></Panel>
-        <Panel title="Sentiment split"><Donut data={[
+        <Panel title="Sentiment split"><PieChart data={[
           { name: "negative", value: mentions.filter((m) => m.sentiment === "negative").length },
           { name: "neutral", value: mentions.filter((m) => m.sentiment === "neutral").length },
           { name: "positive", value: mentions.filter((m) => m.sentiment === "positive").length },
@@ -206,13 +214,76 @@ export function ContentPerformance({ mentions }: { mentions: Mention[] }) {
   );
 }
 
-/* ---------------- Content Sense ---------------- */
-export function ContentSense({ mentions }: { mentions: Mention[] }) {
+/* ---------------- Topics & Themes (Content Sense) ---------------- */
+export function ContentSense({ mentions, sov }: { mentions: Mention[]; sov: CompetitorSov | null }) {
+  const t = topics(mentions);
+  const [sel, setSel] = useState<string>(t[0]?.name ?? "");
+  const [detail, setDetail] = useState<MetricDetail | null>(null);
+  const selTopic = t.find((x) => x.name === sel);
+  const examples = sel ? topicMentions(mentions, sel).sort((a, b) => eng(b) - eng(a)).slice(0, 5) : [];
+
+  // Distinct, meaningful KPIs: discussed = highest volume; criticised = highest NEGATIVE share;
+  // praised = highest POSITIVE share (so they don't all collapse to the biggest topic).
+  const mostDiscussed = t[0];
+  const mostCriticised = [...t].filter((x) => x.negative > 0).sort((a, b) => (b.negative / b.count) - (a.negative / a.count) || b.negative - a.negative)[0];
+  const mostPraised = [...t].filter((x) => x.positive > 0).sort((a, b) => (b.positive / b.count) - (a.positive / a.count) || b.positive - a.positive)[0];
+  const detailFor = (x?: typeof t[0]) => x && setDetail({
+    title: x.name, subtitle: `${x.count} mentions on this topic`,
+    stats: [{ label: "Negative", value: x.negative }, { label: "Neutral", value: x.neutral }, { label: "Positive", value: x.positive }],
+    items: topicMentions(mentions, x.name).sort((a, b) => eng(b) - eng(a)).slice(0, 6).map((m) => ({ platform: m.platform, text: m.text, url: m.url, sentiment: m.sentiment })),
+  });
+
   return (
-    <div className="grid2">
-      <Panel title="Word cloud"><WordCloud data={wordCloud(mentions)} /></Panel>
-      <Panel title="Top hashtags"><BarList data={topHashtags(mentions)} /></Panel>
-    </div>
+    <>
+      <div className="cards">
+        <Kpi k="Topics detected" v={t.length} accent="var(--brand)" sub={`${mentions.length} mentions analysed`} onClick={() => setDetail({ title: "All topics", stats: t.map((x) => ({ label: x.name, value: x.count })) })} />
+        <Kpi k="Most discussed" v={mostDiscussed?.name ?? "—"} accent="#7c3aed" sub={mostDiscussed ? `${mostDiscussed.count} mentions` : ""} onClick={() => detailFor(mostDiscussed)} />
+        <Kpi k="Most criticised" v={mostCriticised?.name ?? "—"} accent="var(--high)" sub={mostCriticised ? `${Math.round((mostCriticised.negative / mostCriticised.count) * 100)}% negative` : "no negatives"} onClick={() => detailFor(mostCriticised)} />
+        <Kpi k="Most praised" v={mostPraised?.name ?? "—"} accent="var(--ok)" sub={mostPraised ? `${Math.round((mostPraised.positive / mostPraised.count) * 100)}% positive` : ""} onClick={() => detailFor(mostPraised)} />
+      </div>
+      {detail && <MetricDrawer d={detail} onClose={() => setDetail(null)} />}
+      <Panel title="Topic network — Prudential vs competitors" right={<span className="count">brand hubs → shared topics · link thickness = volume · drag &amp; hover</span>}>
+        <TopicComparisonNetwork topics={t} sov={sov} />
+      </Panel>
+      <div style={{ height: 16 }} />
+      <Panel title="Most talked topics" right={<span className="count">bubble size = volume · ring = sentiment · click to drill in</span>}>
+        <div onClick={(e) => { const n = (e.target as HTMLElement).closest(".bubble-node")?.getAttribute("data-name"); if (n) setSel(n); }}>
+          <BubbleCluster topics={t} selectable />
+        </div>
+      </Panel>
+      <div style={{ height: 16 }} />
+      <div className="grid2">
+        <Panel title={`Topic detail — ${sel || "—"}`} right={selTopic && <span className="count">top {examples.length} of {selTopic.count} mentions</span>}>
+          {selTopic ? (
+            <>
+              <div className="stacked" style={{ height: 18 }}>
+                <span className="seg" style={{ width: `${(selTopic.negative / Math.max(1, selTopic.count)) * 100}%`, background: "var(--high)" }} />
+                <span className="seg" style={{ width: `${(selTopic.neutral / Math.max(1, selTopic.count)) * 100}%`, background: "#cbd1da" }} />
+                <span className="seg" style={{ width: `${(selTopic.positive / Math.max(1, selTopic.count)) * 100}%`, background: "var(--ok)" }} />
+              </div>
+              <div className="muted" style={{ fontSize: 12, margin: "8px 0 2px" }}>
+                The bubble counts all {selTopic.count} mentions on this topic; below are the top {examples.length} by engagement. Open the KPI card above for the full list.
+              </div>
+              <div className="topic-examples">
+                {examples.map((m) => (
+                  <a className="topic-ex" key={m.id} href={m.url || "#"} target="_blank" rel="noreferrer">
+                    <span className="cap te-plat" style={{ color: platformColor(m.platform) }}>{m.platform}</span>
+                    <span className="te-text">{m.text.slice(0, 130)}…</span>
+                    <span className={`vc-tag ${m.sentiment}`}>{m.sentiment}</span>
+                  </a>
+                ))}
+              </div>
+            </>
+          ) : <div className="muted">No topic selected.</div>}
+        </Panel>
+        <Panel title="Topic share of conversation"><Treemap topics={t} /></Panel>
+      </div>
+      <div style={{ height: 16 }} />
+      <div className="grid2">
+        <Panel title="Word cloud"><WordCloud data={wordCloud(mentions)} /></Panel>
+        <Panel title="Top hashtags"><BarList data={topHashtags(mentions)} /></Panel>
+      </div>
+    </>
   );
 }
 
@@ -246,7 +317,7 @@ export function Benchmarking({ mentions, sov, kind }: { mentions: Mention[]; sov
           <BarList data={donut} colorFor={(n) => n === "Prudential" ? "var(--pru-red)" : "#0A66C2"} />
         </Panel>
         <Panel title="Share of voice — distribution">
-          <Donut data={donut} colorFor={(n) => n === "Prudential" ? "var(--pru-red)" : platformColor(n) || "#0A66C2"} />
+          <PieChart data={donut} colorFor={(n) => n === "Prudential" ? "var(--pru-red)" : platformColor(n) || "#0A66C2"} />
         </Panel>
       </div>
       <Panel title="Sentiment comparison across brands">
@@ -280,8 +351,8 @@ export function CompetitiveIntelligence({ mentions, sov }: { mentions: Mention[]
     <>
       <SovSummary yourCount={pru} groupAvg={Math.round(total / Math.max(1, all.length))} sharePct={(pru / total) * 100} />
       <div className="grid2">
-        <Panel title="Share of Voice — Overall" right={<span className="count">mention volume by brand</span>}><Donut data={all} colorFor={colorFor} /></Panel>
-        <Panel title="Prudential — channel mix"><Donut data={shareOfVoice(mentions)} /></Panel>
+        <Panel title="Share of Voice — Overall" right={<span className="count">mention volume by brand</span>}><PieChart data={all} colorFor={colorFor} /></Panel>
+        <Panel title="Prudential — channel mix"><PieChart data={shareOfVoice(mentions)} /></Panel>
       </div>
     </>
   );

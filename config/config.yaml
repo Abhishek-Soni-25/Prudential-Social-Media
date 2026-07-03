@@ -1,7 +1,7 @@
 # Runtime configuration. Secrets live in .env, NOT here.
 
 poll_interval_seconds: 120      # how often the continuous loop polls each connector
-max_items_per_poll: 3           # process only 3 items per channel per scan
+max_items_per_poll: 80          # store up to this many items per channel per scan
 
 # AI risk-analysis core (Gemini)
 analysis:
@@ -71,7 +71,7 @@ n8n:
 # --- Bright Data Web Scraper (async job model) — YouTube, Reddit, wider web/SERP ---
 # Dataset ids from the API Integration Specification (section 4.2). API key in .env.
 brightdata:
-  poll_timeout_seconds: 300     # Bright Data discovery jobs can take several minutes
+  poll_timeout_seconds: 150     # cap so a slow/stuck discovery job can't hang the whole scan
   datasets:
     reddit_posts:     "gd_lvz8ah06191smkebj4"   # Reddit — discover posts by keyword
     youtube_videos:   "gd_lk56epmy2i5g7lzu0k"   # YouTube — discover videos by keyword
@@ -89,35 +89,35 @@ apify:
       keyword_field: keywords
       keyword_as_list: true
       input_template:
-        maxPosts: 30
+        maxPosts: 60                        # $0.05 start + ~$0.0043/result
       secret_inputs:                        # actor_input_field: ENV_VAR
         cookies: INSTAGRAM_SESSION_COOKIES
-    telegram:                               # telegram keyword search scraper
+    telegram:                               # telegram keyword search scraper (near-free)
       id: "kCdMrRb7UiSRSFYeO"
       keyword_field: keywords
       keyword_as_list: true
       input_template:
         mode: keyword
-        afterDate: "30 days"
-        maxResultsPerKeyword: 30
-    linkedin:                               # harvestapi/linkedin-post-search (No Cookies) — full content
+        afterDate: "180 days"              # wider window
+        maxResultsPerKeyword: 100
+    linkedin:                               # harvestapi/linkedin-post-search — $0.002/post (cheap)
       id: "buIWk2uOUzTmcLsuB"
       keyword_field: searchQueries
       keyword_as_list: true
       input_template:
-        postedLimit: "3months"
+        postedLimit: "3months"             # widest window this actor supports reliably
         sortBy: "date"
-        maxPosts: 30
+        maxPosts: 120
         scrapeReactions: false
         scrapeComments: false
-    quora:                                  # crawlerbros/quora-scraper (searchQuery is a single string)
+    quora:                                  # crawlerbros/quora-scraper — EXPENSIVE ($0.10/q + $0.05/answer); kept modest
       id: "BfPg8oJbuhM5M8h4d"
       keyword_field: searchQuery
       keyword_as_list: false
       input_template:
-        maxQuestions: 20
+        maxQuestions: 10
         scrapeAnswers: true
-        maxAnswersPerQuestion: 5
+        maxAnswersPerQuestion: 3
       secret_inputs:
         cookies: QUORA_SESSION_COOKIES
 
@@ -128,20 +128,11 @@ apify:
 #   mode: n8n        -> legacy n8n webhook (reddit + linkedin)
 #   mode: demo       -> sample pool in data/demo_samples.json
 # A channel is skipped with a warning if its provider credentials are missing in .env.
-channels:
-  reddit:
+channels:                        # Apify (fast, reliable) first; Bright Data (slower) last
+  linkedin:
     enabled: true
-    mode: brightdata
-    dataset: reddit_posts
-    extra_input:
-      date: "Past month"          # Bright Data reddit discovery requires a date range
-      sort_by: "New"
-  youtube:
-    enabled: true
-    mode: brightdata
-    dataset: youtube_videos
-    extra_input:
-      country: "SG"
+    mode: apify
+    actor: linkedin
   instagram:
     enabled: true
     mode: apify
@@ -154,10 +145,21 @@ channels:
     enabled: true
     mode: apify
     actor: quora
-  linkedin:
+  reddit:
     enabled: true
-    mode: apify
-    actor: linkedin
+    mode: brightdata
+    dataset: reddit_posts
+    extra_input:
+      date: "Past month"          # known-valid Bright Data preset ("Past year" hangs the job)
+      sort_by: "New"
+      num_of_posts: 60
+  youtube:
+    enabled: true
+    mode: brightdata
+    dataset: youtube_videos
+    extra_input:
+      country: "SG"
+      num_of_posts: 40            # cap YouTube records to control cost
 
 # LinkedIn scraper (ToS-gated). The unofficial linkedin-api library logs in with a real
 # account, which VIOLATES LinkedIn's User Agreement and risks account suspension / legal

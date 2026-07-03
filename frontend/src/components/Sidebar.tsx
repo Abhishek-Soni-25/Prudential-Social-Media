@@ -2,11 +2,9 @@ import { useState } from "react";
 
 export type Page =
   | "pinned" | "listening_overview" | "influencer" | "campaign_analytics" | "pr_dashboard"
-  | "brand_intelligence" | "competitive_intelligence"
-  | "content_performance" | "content_sense"
-  | "bench_competition" | "bench_content"
-  | "reports"
-  | "publish" | "bulk" | "campaign";
+  | "content_sense" | "content_performance" | "marketing"
+  | "bench_competition"
+  | "reports" | "publish" | "bulk" | "campaign";
 
 type Section = "analytics" | "reports" | "publish" | "bulk" | "campaign";
 
@@ -19,29 +17,25 @@ const RAIL: { key: Section; icon: string; label: string }[] = [
 ];
 
 const ANALYTICS: { group: string; items: { key: Page; label: string }[] }[] = [
-  { group: "", items: [{ key: "pinned", label: "Pinned Dashboard" }] },
-  { group: "Listening Insights", items: [
+  { group: "", items: [{ key: "pinned", label: "Overview Dashboard" }] },
+  { group: "Social Listening", items: [
     { key: "listening_overview", label: "Listening Overview" },
-    { key: "influencer", label: "Influencer & UGC" },
-    { key: "campaign_analytics", label: "Campaign Analytics" },
-    { key: "pr_dashboard", label: "PR Dashboard" },
+    { key: "influencer", label: "Influencers & UGC" },
+    { key: "content_sense", label: "Topics & Themes" },
+    { key: "pr_dashboard", label: "PR & Reputation" },
   ] },
-  { group: "Contextual Pulse™", items: [
-    { key: "brand_intelligence", label: "Brand Intelligence" },
-    { key: "competitive_intelligence", label: "Competitive Intelligence" },
-  ] },
-  { group: "Marketing Pulse", items: [
+  { group: "Marketing", items: [
+    { key: "marketing", label: "Marketing Report" },
     { key: "content_performance", label: "Content Performance" },
-    { key: "content_sense", label: "Content Sense" },
+    { key: "campaign_analytics", label: "Campaign Analytics" },
   ] },
   { group: "Benchmarking", items: [
     { key: "bench_competition", label: "Competition Benchmarking" },
-    { key: "bench_content", label: "Content Benchmarking" },
   ] },
 ];
 
 const SECTION_PAGES: Record<Exclude<Section, "analytics">, { key: Page; label: string }[]> = {
-  reports: [{ key: "reports", label: "Reports & Export" }],
+  reports: [{ key: "reports", label: "Risk Report & Export" }],
   publish: [{ key: "publish", label: "Publish & Respond" }],
   bulk: [{ key: "bulk", label: "Bulk Actions" }],
   campaign: [{ key: "campaign", label: "Keyword Campaigns" }],
@@ -49,10 +43,9 @@ const SECTION_PAGES: Record<Exclude<Section, "analytics">, { key: Page; label: s
 
 const PAGE_SECTION: Record<Page, Section> = {
   pinned: "analytics", listening_overview: "analytics", influencer: "analytics",
-  campaign_analytics: "analytics", pr_dashboard: "analytics",
-  brand_intelligence: "analytics", competitive_intelligence: "analytics",
-  content_performance: "analytics", content_sense: "analytics",
-  bench_competition: "analytics", bench_content: "analytics",
+  campaign_analytics: "analytics", pr_dashboard: "analytics", content_sense: "analytics",
+  content_performance: "analytics", marketing: "analytics",
+  bench_competition: "analytics",
   reports: "reports", publish: "publish", bulk: "bulk", campaign: "campaign",
 };
 
@@ -87,9 +80,7 @@ export function Sidebar({ active, onNav }: { active: Page; onNav: (p: Page) => v
         ) : (
           <div className="subnav-tree">
             {SECTION_PAGES[section].map((it) => (
-              <button key={it.key} className={`sub-item ${active === it.key ? "active" : ""}`} onClick={() => onNav(it.key)}>
-                {it.label}
-              </button>
+              <button key={it.key} className={`sub-item ${active === it.key ? "active" : ""}`} onClick={() => onNav(it.key)}>{it.label}</button>
             ))}
           </div>
         )}
@@ -106,9 +97,7 @@ function AnalyticsGroup({ group, items, active, onNav }: {
     return (
       <div className="subnav-flat">
         {items.map((it) => (
-          <button key={it.key} className={`sub-item ${active === it.key ? "active" : ""}`} onClick={() => onNav(it.key)}>
-            📌 {it.label}
-          </button>
+          <button key={it.key} className={`sub-item ${active === it.key ? "active" : ""}`} onClick={() => onNav(it.key)}>📌 {it.label}</button>
         ))}
       </div>
     );
@@ -119,9 +108,7 @@ function AnalyticsGroup({ group, items, active, onNav }: {
         <span>{group}</span><span className="chev">{open ? "▾" : "▸"}</span>
       </button>
       {open && items.map((it) => (
-        <button key={it.key} className={`sub-item indent ${active === it.key ? "active" : ""}`} onClick={() => onNav(it.key)}>
-          {it.label}
-        </button>
+        <button key={it.key} className={`sub-item indent ${active === it.key ? "active" : ""}`} onClick={() => onNav(it.key)}>{it.label}</button>
       ))}
     </div>
   );

@@ -7,29 +7,26 @@ import { Sidebar, type Page } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { CaseDrawer } from "./components/CaseDrawer";
 import { Overview } from "./pages/Overview";
-import { Competitors } from "./pages/Competitors";
 import { Reports } from "./pages/Reports";
 import {
-  ListeningOverview, Influencer, CampaignAnalytics, PRDashboard, BrandIntelligence,
-  CompetitiveIntelligence, ContentPerformance, ContentSense, Benchmarking,
+  Influencer, CampaignAnalytics, PRDashboard, ContentPerformance, ContentSense,
   Publish, BulkActions, Campaign,
 } from "./pages/Pages";
+import { MarketingReport, ListeningReport, CompetitionReport } from "./pages/ReportPages";
 
 const REAL_CHANNELS = ["reddit", "youtube", "instagram", "telegram", "quora", "linkedin"];
 
 const META: Record<Page, { title: string; sub: string }> = {
-  pinned: { title: "Risk Surveillance Dashboard", sub: "AI monitoring across channels — sentiment & risk mapped to RACM / KRI." },
-  listening_overview: { title: "Listening Overview", sub: "Volume, sentiment and trend for Prudential Singapore." },
-  influencer: { title: "Influencer & UGC", sub: "Top vocal users and the user-generated content driving the conversation." },
+  pinned: { title: "Overview Dashboard", sub: "AI monitoring across channels — sentiment & risk mapped to RACM / KRI." },
+  listening_overview: { title: "Listening Overview", sub: "Deep view of incoming mentions across all channels — volume, sentiment, audience, engagement." },
+  influencer: { title: "Influencers & UGC", sub: "Top vocal users and the user-generated content driving the conversation." },
   campaign_analytics: { title: "Campaign Analytics", sub: "Keyword campaign performance and reach by channel." },
-  pr_dashboard: { title: "PR Dashboard", sub: "Reputation risk, negative sentiment and flagged items mapped to RACM / KRI." },
-  brand_intelligence: { title: "Brand Intelligence — Customer Voice", sub: "AI analysis of the topics and opinions in the conversation." },
-  competitive_intelligence: { title: "Competitive Contextual Pulse", sub: "Share of voice — Prudential vs the competitor set." },
+  pr_dashboard: { title: "PR & Reputation", sub: "Reputation risk, negative sentiment and flagged items mapped to RACM / KRI." },
+  content_sense: { title: "Topics & Themes", sub: "The topics, opinions, hashtags and word clouds in the conversation." },
   content_performance: { title: "Content Performance", sub: "Engagement by channel and the top-performing posts." },
-  content_sense: { title: "Content Sense", sub: "Themes, hashtags and word clouds across the conversation." },
-  bench_competition: { title: "Competition Benchmarking", sub: "Share of voice, volume and sentiment vs the competitor set." },
-  bench_content: { title: "Content Benchmarking", sub: "Topic themes in the Prudential conversation." },
-  reports: { title: "Reports & Export", sub: "Generate a full priority-ranked surveillance report, or export CSV." },
+  marketing: { title: "Marketing Report", sub: "Brand summary — followers, sentiment split, distribution, influencers and share of voice." },
+  bench_competition: { title: "Competition Benchmarking", sub: "Benchmark earned & owned content against competitors — SoV, engagement, response." },
+  reports: { title: "Risk Report & Export", sub: "Generate a full priority-ranked surveillance report, or export CSV." },
   publish: { title: "Publish & Respond", sub: "Reply to mentions, publish from Prudential's accounts, and track own-post engagement." },
   bulk: { title: "Bulk Actions", sub: "Select and action many mentions at once, ranked by priority." },
   campaign: { title: "Keyword Campaigns", sub: "Add your own keywords and review the channels driving collection." },
@@ -45,6 +42,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<CaseFile | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [navOpen, setNavOpen] = useState(false);
 
   const live = mentions.length > 0;
   const channels = live ? REAL_CHANNELS : ALL_CHANNELS;
@@ -86,31 +84,23 @@ export default function App() {
   const sel = setSelected;
 
   return (
-    <div className="shell">
-      <Sidebar active={page} onNav={setPage} />
+    <div className={`shell${navOpen ? " nav-open" : ""}`}>
+      <Sidebar active={page} onNav={(p) => { setPage(p); setNavOpen(false); }} />
+      {navOpen && <div className="nav-scrim" onClick={() => setNavOpen(false)} />}
       <div className="content">
-        <TopBar title={meta.title} subtitle={meta.sub} count={mentions.length} running={loading} live={live} onScan={runScan} />
+        <TopBar title={meta.title} subtitle={meta.sub} count={mentions.length} running={loading} live={live} onScan={runScan} onMenu={() => setNavOpen((o) => !o)} />
         <main className="page">
           {banner && <div className="banner banner-info">ℹ {banner}</div>}
 
           {page === "pinned" && <Overview stats={stats} insights={insights} mentions={mentions} cases={cases} onSelect={sel} />}
-          {page === "listening_overview" && <ListeningOverview mentions={mentions} cases={cases} onSelect={sel} />}
+          {page === "listening_overview" && <ListeningReport mentions={mentions} />}
           {page === "influencer" && <Influencer mentions={mentions} />}
           {page === "campaign_analytics" && <CampaignAnalytics mentions={mentions} />}
           {page === "pr_dashboard" && <PRDashboard mentions={mentions} cases={cases} stats={stats} onSelect={sel} />}
-          {page === "brand_intelligence" && <BrandIntelligence mentions={mentions} />}
-          {page === "competitive_intelligence" && (
-            <>
-              <CompetitiveIntelligence mentions={mentions} sov={sov} />
-              <div style={{ marginTop: 16 }}>
-                <Competitors mentions={mentions} sov={sov} onScan={runCompetitorScan} scanning={compScanning} />
-              </div>
-            </>
-          )}
+          {page === "content_sense" && <ContentSense mentions={mentions} sov={sov} />}
           {page === "content_performance" && <ContentPerformance mentions={mentions} />}
-          {page === "content_sense" && <ContentSense mentions={mentions} />}
-          {page === "bench_competition" && <Benchmarking mentions={mentions} sov={sov} kind="competition" />}
-          {page === "bench_content" && <Benchmarking mentions={mentions} sov={sov} kind="content" />}
+          {page === "marketing" && <MarketingReport mentions={mentions} sov={sov} />}
+          {page === "bench_competition" && <CompetitionReport mentions={mentions} sov={sov} onScan={runCompetitorScan} scanning={compScanning} />}
           {page === "reports" && <Reports stats={stats} mentions={mentions} />}
           {page === "publish" && <Publish mentions={mentions} cases={cases} />}
           {page === "bulk" && <BulkActions cases={cases} />}
