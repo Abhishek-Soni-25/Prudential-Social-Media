@@ -528,3 +528,14 @@ tbody tr:hover { background: #fcf4f5; }
 
 /* Any wide chart/table can scroll rather than overflow the viewport */
 .panel-body { overflow-x: auto; }
+
+/* ================= Responsive tables ================= */
+.table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.rationale-cell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* On narrow screens, keep tables at a usable width and let the wrapper scroll
+   horizontally instead of crushing/overflowing the panel. */
+@media (max-width: 900px) {
+  .table-scroll table, .panel-body table { min-width: 620px; }
+  .rationale-cell { max-width: 240px; }
+}

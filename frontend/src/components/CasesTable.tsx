@@ -18,6 +18,7 @@ export function CasesTable({
     );
   }
   return (
+    <div className="table-scroll">
     <table>
       <thead>
         <tr>
@@ -60,5 +61,6 @@ export function CasesTable({
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
