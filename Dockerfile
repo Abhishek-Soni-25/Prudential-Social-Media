@@ -25,6 +25,10 @@ RUN pip install -r requirements.txt
 COPY src/ ./src/
 COPY config/ ./config/
 
+# Knowledge base collected from the scrapers (mentions.jsonl, competitors.json, keywords.json).
+# .dockerignore excludes data/cases/ and data/state/, so only the stored knowledge base ships.
+COPY data/ ./data/
+
 # Built frontend from stage 1 (FastAPI serves it at "/")
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
