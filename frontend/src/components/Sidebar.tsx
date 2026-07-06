@@ -4,9 +4,9 @@ export type Page =
   | "pinned" | "listening_overview" | "influencer" | "campaign_analytics" | "pr_dashboard"
   | "content_sense" | "content_performance" | "marketing"
   | "bench_competition"
-  | "reports" | "publish" | "bulk" | "campaign";
+  | "reports" | "publish" | "bulk" | "campaign" | "compliance";
 
-type Section = "analytics" | "reports" | "publish" | "bulk" | "campaign";
+type Section = "analytics" | "reports" | "publish" | "bulk" | "campaign" | "compliance";
 
 const RAIL: { key: Section; icon: string; label: string }[] = [
   { key: "analytics", icon: "▤", label: "Analytics" },
@@ -14,6 +14,7 @@ const RAIL: { key: Section; icon: string; label: string }[] = [
   { key: "publish", icon: "➤", label: "Publish" },
   { key: "bulk", icon: "❑", label: "Bulk Actions" },
   { key: "campaign", icon: "◎", label: "Campaign" },
+  { key: "compliance", icon: "⚖", label: "Media Compliance" },
 ];
 
 const ANALYTICS: { group: string; items: { key: Page; label: string }[] }[] = [
@@ -39,6 +40,7 @@ const SECTION_PAGES: Record<Exclude<Section, "analytics">, { key: Page; label: s
   publish: [{ key: "publish", label: "Publish & Respond" }],
   bulk: [{ key: "bulk", label: "Bulk Actions" }],
   campaign: [{ key: "campaign", label: "Keyword Campaigns" }],
+  compliance: [{ key: "compliance", label: "Media Compliance Analyzer" }],
 };
 
 const PAGE_SECTION: Record<Page, Section> = {
@@ -46,7 +48,7 @@ const PAGE_SECTION: Record<Page, Section> = {
   campaign_analytics: "analytics", pr_dashboard: "analytics", content_sense: "analytics",
   content_performance: "analytics", marketing: "analytics",
   bench_competition: "analytics",
-  reports: "reports", publish: "publish", bulk: "bulk", campaign: "campaign",
+  reports: "reports", publish: "publish", bulk: "bulk", campaign: "campaign", compliance: "compliance",
 };
 
 export function Sidebar({ active, onNav }: { active: Page; onNav: (p: Page) => void }) {

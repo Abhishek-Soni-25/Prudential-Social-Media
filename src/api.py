@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -34,6 +34,7 @@ from . import mentions as mentions_store
 from . import competitors as competitors_store
 from . import keywords as keywords_store
 from . import publish as publish_store
+from . import compliance as compliance_mod
 from .pipeline.risk_classifier import RiskClassifier
 from .escalation import Escalation
 from . import main as pipeline_main
@@ -415,6 +416,69 @@ def publish_post(body: dict[str, Any]) -> dict[str, Any]:
 @app.get("/api/publish/outbox")
 def publish_outbox() -> list[dict[str, Any]]:
     return publish_store.load_outbox()
+
+
+@app.get("/api/compliance/checks")
+def compliance_checks() -> dict[str, Any]:
+    """The compliance checklist + the mandatory standard warning (for the UI)."""
+    return {
+        "standard_warning": compliance_mod.STANDARD_WARNING,
+        "checks": [{"id": c["id"], "title": c["title"], "source": c["source"]} for c in compliance_mod.COMPLIANCE_CHECKS],
+    }
+
+
+@app.post("/api/compliance/check")
+def compliance_check(body: dict[str, Any]) -> dict[str, Any]:
+    """Screen an image creative (or client-extracted video frames) against the ad rules."""
+    images = body.get("images") or ([body["image"]] if body.get("image") else [])
+    note = body.get("note")
+    transcript = body.get("transcript")
+    if not images and not transcript:
+        raise HTTPException(status_code=400, detail="Provide an image (data URL) to screen.")
+    try:
+        return compliance_mod.analyze(images, note, _cfg, transcript=transcript)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("compliance check failed")
+        raise HTTPException(status_code=500, detail=f"Compliance check failed: {exc}")
+
+
+@app.post("/api/compliance/link")
+def compliance_link(body: dict[str, Any]) -> dict[str, Any]:
+    """Screen a video link (e.g. YouTube): pull the caption transcript + a thumbnail frame."""
+    url = (body.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Provide a video URL.")
+    try:
+        yt = compliance_mod.fetch_youtube(url)
+        images = [yt["thumbnail"]] if yt.get("thumbnail") else []
+        transcript = yt.get("transcript") or ""
+        note = f"Video link: {url}." + ("" if transcript else " No captions were available for this video, so spoken-audio checks are UNCLEAR.")
+        result = compliance_mod.analyze(images, note, _cfg, transcript=transcript or None)
+        result["transcript"] = transcript
+        result["frame"] = yt.get("thumbnail")
+        return result
+    except Exception as exc:  # noqa: BLE001
+        log.exception("compliance link check failed")
+        raise HTTPException(status_code=500, detail=f"Video-link check failed: {exc}")
+
+
+@app.post("/api/compliance/video")
+async def compliance_video(file: UploadFile = File(...), frames: str = Form("[]")) -> dict[str, Any]:
+    """Screen an uploaded video: transcribe its voice-over (Whisper) + screen sampled frames."""
+    try:
+        img_list = json.loads(frames) if frames else []
+    except json.JSONDecodeError:
+        img_list = []
+    try:
+        data = await file.read()
+        transcript = compliance_mod.transcribe(data, file.filename or "video.mp4", _cfg)
+        note = "Uploaded video creative — frames sampled across the video."
+        result = compliance_mod.analyze(img_list, note, _cfg, transcript=transcript or None)
+        result["transcript"] = transcript
+        return result
+    except Exception as exc:  # noqa: BLE001
+        log.exception("compliance video check failed")
+        raise HTTPException(status_code=500, detail=f"Video check failed: {exc}")
 
 
 # --- Serve the built React frontend (single-container deploy on Cloud Run) ----------

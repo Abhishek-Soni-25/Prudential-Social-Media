@@ -1,4 +1,4 @@
-import type { AuthorActivity, CaseFile, Channel, CompetitorSov, Mention, ScanStatus, Stats } from "./types";
+import type { AuthorActivity, CaseFile, Channel, CompetitorSov, ComplianceResult, Mention, ScanStatus, Stats } from "./types";
 
 const BASE = "/api";
 
@@ -40,6 +40,24 @@ export const api = {
   publishPost: async (payload: Record<string, unknown>) => {
     const res = await fetch(`${BASE}/publish/post`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     return res.json();
+  },
+  complianceCheck: async (payload: { images?: string[]; image?: string; note?: string; transcript?: string }) => {
+    const res = await fetch(`${BASE}/compliance/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `${res.status}`);
+    return res.json() as Promise<ComplianceResult>;
+  },
+  complianceLink: async (url: string) => {
+    const res = await fetch(`${BASE}/compliance/link`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `${res.status}`);
+    return res.json() as Promise<ComplianceResult>;
+  },
+  complianceVideo: async (file: File, frames: string[]) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("frames", JSON.stringify(frames));
+    const res = await fetch(`${BASE}/compliance/video`, { method: "POST", body: fd });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `${res.status}`);
+    return res.json() as Promise<ComplianceResult>;
   },
   startCompetitorScan: async (): Promise<{ started: boolean; reason?: string }> => {
     const res = await fetch(`${BASE}/scan/competitors`, { method: "POST" });

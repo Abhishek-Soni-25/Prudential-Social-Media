@@ -17,6 +17,13 @@ analysis:
   # (negative content gets analyzed even if short).
   negative_prefilter_threshold: -0.2
 
+# Media Compliance analyzer — screens marketing creatives against SEBI / NSE / BSE / NSDL /
+# CDSL advertising rules using a Groq vision model.
+compliance:
+  vision_model: "meta-llama/llama-4-scout-17b-16e-instruct"   # Groq multimodal (image input)
+  transcribe_model: "whisper-large-v3-turbo"                  # Groq audio → voice-over transcript
+  max_tokens: 1600
+
 # Monitoring target — every channel is narrowed to content about this organization.
 target:
   name: "Prudential Singapore"

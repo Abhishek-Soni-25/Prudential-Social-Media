@@ -15,3 +15,5 @@ vaderSentiment>=3.3.2     # local sentiment pre-pass for the CLI pipeline (degra
 
 # ── Legacy (no longer used; kept for the older Gemini code path) ──────────────
 google-genai>=1.0.0
+python-multipart>=0.0.9      # FastAPI multipart uploads (media compliance video)
+youtube-transcript-api>=0.6.2 # YouTube caption transcript for media compliance video links
