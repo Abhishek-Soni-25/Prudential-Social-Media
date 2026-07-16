@@ -71,25 +71,6 @@ export interface Channel {
   sources: string[];
 }
 
-export interface ComplianceCheck {
-  id: string;
-  title: string;
-  source: string;
-  status: "PASS" | "FAIL" | "UNCLEAR";
-  detail: string;
-}
-export interface ComplianceResult {
-  issues_found: boolean;
-  summary: string;
-  checks: ComplianceCheck[];
-  passed: number;
-  failed: number;
-  unclear: number;
-  transcript?: string;
-  frame?: string | null;
-  frames_used?: number;
-}
-
 export interface SovEntry {
   total: number;
   positive: number;

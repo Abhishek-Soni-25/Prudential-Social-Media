@@ -31,7 +31,7 @@ const META: Record<Page, { title: string; sub: string }> = {
   publish: { title: "Publish & Respond", sub: "Reply to mentions, publish from Prudential's accounts, and track own-post engagement." },
   bulk: { title: "Bulk Actions", sub: "Select and action many mentions at once, ranked by priority." },
   campaign: { title: "Keyword Campaigns", sub: "Add your own keywords and review the channels driving collection." },
-  compliance: { title: "Media Compliance", sub: "Screen marketing creatives against SEBI / NSE / BSE / NSDL / CDSL advertising rules." },
+  compliance: { title: "Media Compliance", sub: "Screen adviser and marketer creatives against MAS FSG-03 and Prudential advertising policy." },
 };
 
 export default function App() {

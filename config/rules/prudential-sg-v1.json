@@ -1,0 +1,536 @@
+{
+  "ruleSetId": "prudential-sg",
+  "version": "1.0.0",
+  "effectiveFrom": "2026-03-25",
+  "confidenceFloor": { "High": 0.85, "Medium": 0.75, "Low": 0.75 },
+  "phraseLists": {
+    "riskWarning": [],
+    "licensingStatement": [],
+    "pastPerformanceCaveat": []
+  },
+  "rules": [
+    {
+      "id": "D-01",
+      "type": "prohibition",
+      "title": "Client policy document or values visible",
+      "description": "Client policy document, benefit illustration, statement or account value visible, whether or not identifiers are redacted",
+      "severity": "High",
+      "status": "active",
+      "dependency": null,
+      "detection": {
+        "modalities": ["image_text", "video_frame_text"],
+        "signal": "OCR finds two or more policy schedule field labels in one frame: Policy Number, Plan Type, Policyowner Name, Sum Assured, Surrender Value, Account Value, Total Premiums Paid, Pricing Date",
+        "template": "entity",
+        "params": {
+          "labelSet": ["Policy Number", "Plan Type", "Policyowner Name", "Sum Assured", "Surrender Value", "Account Value", "Total Premiums Paid", "Pricing Date"],
+          "minCount": 2,
+          "scope": "frame"
+        }
+      },
+      "basis": "PDPA 2012; MAS FSG-03 Safeguard 2",
+      "reviewerNote": "A visible policy schedule or benefit illustration exposes a real client's contract even when the name is blacked out. The field labels alone confirm it is client data, not marketing copy.",
+      "suggestedFix": "Remove any real policy schedule, benefit illustration, statement or account value. Use an approved sample or a fully synthetic illustration instead.",
+      "enabled": true
+    },
+    {
+      "id": "D-02",
+      "type": "prohibition",
+      "title": "Client personal data visible in a product context",
+      "description": "Client personal data visible (name, NRIC, contact details, face) in a sales or product context",
+      "severity": "High",
+      "status": "active",
+      "dependency": null,
+      "detection": {
+        "modalities": ["image_text", "video_frame_text", "image_face"],
+        "signal": "PII pattern match on extracted text; face detection where a product entity is also present",
+        "template": "regex",
+        "params": {
+          "patterns": ["nric", "sg_phone", "email"],
+          "requiresProductContext": true,
+          "faceContext": true
+        }
+      },
+      "basis": "PDPA 2012",
+      "reviewerNote": "A client's name, NRIC, contact details or face shown alongside a product turns a marketing asset into a disclosure of personal data.",
+      "suggestedFix": "Remove or fully pseudonymise the client identifier. Do not rely on partial redaction. Obtain consent and legal sign-off before featuring any identifiable person.",
+      "enabled": true
+    },
+    {
+      "id": "D-03",
+      "type": "prohibition",
+      "title": "Specific investment return or yield figure quoted",
+      "description": "A specific investment return, growth rate or yield figure is quoted",
+      "severity": "High",
+      "status": "active",
+      "dependency": null,
+      "detection": {
+        "modalities": ["image_text", "video_frame_text", "transcript", "caption"],
+        "signal": "Numeric percentage in the same text block as: return, growth, yield, gain, profit, p.a., per annum, XIRR, CAGR",
+        "template": "regex",
+        "params": {
+          "pattern": "percentage",
+          "nearTerms": ["return", "growth", "yield", "gain", "profit", "p.a.", "per annum", "XIRR", "CAGR"],
+          "proximity": "text_block"
+        }
+      },
+      "basis": "FAR Sixth Schedule; FSG-03 Safeguard 2",
+      "reviewerNote": "Quoting a specific return, growth rate or yield presents an investment outcome as if it were achievable, which the FAR Sixth Schedule treats as misleading.",
+      "suggestedFix": "Remove the specific return, growth or yield figure. Refer consumers to the product summary and benefit illustration for any projected values.",
+      "enabled": true
+    },
+    {
+      "id": "D-04",
+      "type": "prohibition",
+      "title": "Returns described as guaranteed or risk-free",
+      "description": "Returns described as guaranteed, assured, risk-free or capital protected, or implied to be so",
+      "severity": "High",
+      "status": "active",
+      "dependency": null,
+      "detection": {
+        "modalities": ["image_text", "video_frame_text", "transcript", "caption"],
+        "signal": "Fixed lexicon: guaranteed, guarantee, assured returns, risk-free, riskless, capital protected, no loss, sure returns",
+        "template": "lexicon",
+        "params": {
+          "terms": ["guaranteed", "guarantee", "assured returns", "risk-free", "riskless", "capital protected", "no loss", "sure returns"]
+        }
+      },
+      "basis": "FAR Sixth Schedule; FSG-03 Safeguard 2",
+      "reviewerNote": "Describing returns as guaranteed, assured, risk-free or capital protected misleads a reasonable consumer about the risk they are taking.",
+      "suggestedFix": "Delete any language implying guaranteed, assured, risk-free or capital-protected returns. State the product's actual risk profile.",
+      "enabled": true
+    },
+    {
+      "id": "D-05",
+      "type": "prohibition",
+      "title": "Client testimonial or chat screenshot as proof",
+      "description": "Client testimonial, chat screenshot or forwarded client message used as proof of product performance",
+      "severity": "High",
+      "status": "active",
+      "dependency": null,
+      "detection": {
+        "modalities": ["image_text", "video_frame_text"],
+        "signal": "Messaging-app UI detected (chat bubbles, read receipts, timestamp rail) together with a currency amount or a percentage",
+        "template": "vision",
+        "params": {
+          "visualCue": "messaging_ui",
+          "coPresent": ["currency_amount", "percentage"]
+        }
+      },
+      "basis": "FAR reg 22; FSG-03 Safeguard 2",
+      "reviewerNote": "A client chat screenshot or testimonial used as proof of performance is a prohibited testimonial and cannot be substantiated.",
+      "suggestedFix": "Remove the testimonial, chat screenshot or forwarded client message. Do not use client outcomes as evidence of product performance.",
+      "enabled": true
+    },
+    {
+      "id": "D-06",
+      "type": "prohibition",
+      "title": "Personalised advice in public content",
+      "description": "Personalised advice or a product recommendation directed at an individual in public content",
+      "severity": "High",
+      "status": "advisory",
+      "dependency": null,
+      "detection": {
+        "modalities": ["image_text", "transcript", "caption"],
+        "signal": "Second-person imperative plus a named product. Flags for review only; the education / advice line is a legal judgement the engine will not make",
+        "template": "vision",
+        "params": {
+          "linguisticCue": "second_person_imperative",
+          "coPresent": ["product_entity"]
+        }
+      },
+      "basis": "FAA licensing. Advisory until Prudential Legal sets the boundary",
+      "reviewerNote": "Directing a product recommendation at an individual may cross from education into regulated advice. Where that line sits is a legal judgement, so the engine flags but does not block.",
+      "suggestedFix": "Reframe as general education, or route the individual to a licensed representative for personal advice.",
+      "enabled": true
+    },
+    {
+      "id": "D-07",
+      "type": "prohibition",
+      "title": "Urgency, scarcity or pressure language",
+      "description": "Urgency, scarcity or pressure language used to drive a product decision",
+      "severity": "Medium",
+      "status": "advisory",
+      "dependency": null,
+      "detection": {
+        "modalities": ["image_text", "transcript", "caption"],
+        "signal": "Lexicon: last chance, closing soon, limited slots, act now, offer ends, only X left",
+        "template": "lexicon",
+        "params": {
+          "terms": ["last chance", "closing soon", "limited slots", "act now", "offer ends", "only", "left"]
+        }
+      },
+      "basis": "FSG-03 (deceptive tactics). Advisory: legitimate on seminar invitations",
+      "reviewerNote": "Pressure language can be a deceptive tactic, but is legitimate on genuine seminar invitations, so the call is left to a reviewer.",
+      "suggestedFix": "Remove pressure language tied to a product decision. Time limits are acceptable only for genuine events such as seminar registration.",
+      "enabled": true
+    },
+    {
+      "id": "D-08",
+      "type": "prohibition",
+      "title": "Direct comparison against a named competitor",
+      "description": "Direct comparison against a named competitor product, insurer or returns figure",
+      "severity": "Medium",
+      "status": "advisory",
+      "dependency": null,
+      "detection": {
+        "modalities": ["image_text", "transcript", "caption"],
+        "signal": "Competitor entity detected alongside a comparative construction or a figure",
+        "template": "entity",
+        "params": {
+          "entityList": ["AIA", "Great Eastern", "Income", "NTUC Income", "Manulife", "Singlife", "AXA", "Aviva", "HSBC Life", "Tokio Marine", "China Life", "FWD"],
+          "coPresent": ["comparative_construction", "figure"]
+        }
+      },
+      "basis": "FAR Sixth Schedule. Advisory pending Prudential comparative advertising policy",
+      "reviewerNote": "A direct comparison against a named competitor may be unfair or incomplete, but whether it is permitted depends on Prudential's comparative advertising policy.",
+      "suggestedFix": "Remove the named-competitor comparison, or ensure it is fair, complete and consistent with Prudential's comparative advertising policy.",
+      "enabled": true
+    },
+    {
+      "id": "D-09",
+      "type": "prohibition",
+      "title": "Recruitment content quoting income without context",
+      "description": "Recruitment content quoting income levels without licensing and variable-earnings context",
+      "severity": "Medium",
+      "status": "pending_config",
+      "dependency": "Needs Prudential recruitment advertising policy",
+      "detection": {
+        "modalities": ["image_text", "caption"],
+        "signal": "Job-ad layout with a salary or income range plus adviser or agency keywords",
+        "template": "vision",
+        "params": {
+          "visualCue": "job_ad_layout",
+          "coPresent": ["income_range", "recruitment_keywords"]
+        }
+      },
+      "basis": "Needs Prudential recruitment advertising policy",
+      "reviewerNote": "Recruitment posts quoting income can mislead on the variable, commission-based nature of adviser earnings. Requires Prudential's recruitment advertising policy before it can be enforced.",
+      "suggestedFix": "State that adviser earnings are variable and commission-based, and include licensing requirements, per the recruitment advertising policy.",
+      "enabled": false
+    },
+    {
+      "id": "D-10",
+      "type": "prohibition",
+      "title": "Award claim without year and issuing body",
+      "description": "Award or accolade claim (MDRT, COT, TOT) without qualifying year and issuing body",
+      "severity": "Low",
+      "status": "advisory",
+      "dependency": null,
+      "detection": {
+        "modalities": ["image_text", "caption"],
+        "signal": "Award keyword without a four-digit year and an issuer in the same frame",
+        "template": "lexicon",
+        "params": {
+          "terms": ["MDRT", "COT", "TOT", "Million Dollar Round Table", "Court of the Table", "Top of the Table"],
+          "requiresQualifiers": ["four_digit_year", "issuer"]
+        }
+      },
+      "basis": "ASAS Code; brand policy",
+      "reviewerNote": "An award claim without its qualifying year and issuing body can overstate current standing. A housekeeping defect rather than a consumer harm.",
+      "suggestedFix": "Add the qualifying year and the issuing body to the award claim (e.g. \"MDRT 2025, Million Dollar Round Table\").",
+      "enabled": true
+    },
+    {
+      "id": "D-11",
+      "type": "prohibition",
+      "title": "Unapproved overlay or edit on approved creative",
+      "description": "Unapproved overlay, edit or personal opinion added to Prudential-approved creative",
+      "severity": "Medium",
+      "status": "pending_config",
+      "dependency": "FSG-03 Safeguard 2. Needs creative library and template hash registry",
+      "detection": {
+        "modalities": ["image_text", "video_frame_text"],
+        "signal": "Template hash mismatch; text overlay outside approved zones",
+        "template": "vision",
+        "params": {
+          "check": "template_hash_and_zone"
+        }
+      },
+      "basis": "FSG-03 Safeguard 2. Needs creative library and template hash registry",
+      "reviewerNote": "Overlays or edits added to an approved creative can undo the approval. Requires the creative library and template hash registry to detect.",
+      "suggestedFix": "Revert to the approved creative. Route any overlay or edit through the approval workflow.",
+      "enabled": false
+    },
+    {
+      "id": "D-12",
+      "type": "prohibition",
+      "title": "Off-brand logo, identity or hashtag",
+      "description": "Off-brand logo treatment, unapproved visual identity or unapproved hashtag",
+      "severity": "Low",
+      "status": "pending_config",
+      "dependency": "Brand governance. Needs brand asset pack and hashtag allowlist",
+      "detection": {
+        "modalities": ["image_text", "caption"],
+        "signal": "Logo integrity check; hashtag allowlist match",
+        "template": "vision",
+        "params": {
+          "check": "logo_integrity_and_hashtag_allowlist"
+        }
+      },
+      "basis": "Brand governance. Needs brand asset pack and hashtag allowlist",
+      "reviewerNote": "Off-brand logo treatment or an unapproved hashtag is a brand governance defect. Requires the brand asset pack and hashtag allowlist to detect.",
+      "suggestedFix": "Use the approved logo treatment and only hashtags on the brand allowlist.",
+      "enabled": false
+    },
+    {
+      "id": "A-01",
+      "type": "requirement",
+      "title": "Risk warning present where a product is named",
+      "description": "Where a product is named, a risk warning or material limitation appears in the same asset",
+      "severity": "Medium",
+      "status": "active",
+      "dependency": "FSG-03 Safeguard 2. Needs approved risk-warning phrase list",
+      "detection": {
+        "modalities": ["image_text", "caption", "transcript"],
+        "signal": "Product entity detected and no approved risk-warning phrase found in frame text, caption or transcript of the same asset",
+        "template": "phrase_absence",
+        "params": {
+          "phraseList": "riskWarning",
+          "trigger": "product_entity"
+        },
+        "phraseList": "riskWarning"
+      },
+      "basis": "FSG-03 Safeguard 2. Needs approved phrase list",
+      "reviewerNote": "Where a product is named, a risk warning or material limitation must appear in the same asset. The check runs against Prudential's approved risk-warning wording.",
+      "suggestedFix": "Add an approved risk warning or material limitation statement to the same asset as the product.",
+      "enabled": true
+    },
+    {
+      "id": "A-02",
+      "type": "requirement",
+      "title": "Representative identification and licensing stated",
+      "description": "Where a product is named, the poster is identified as a Prudential representative with licensing status stated",
+      "severity": "Medium",
+      "status": "active",
+      "dependency": "FAA 2001; FSG-03 Safeguard 2. Needs approved licensing statement phrase list",
+      "detection": {
+        "modalities": ["image_text", "caption", "transcript"],
+        "signal": "Product entity detected and no representative identification or licensing statement in the same asset",
+        "template": "phrase_absence",
+        "params": {
+          "phraseList": "licensingStatement",
+          "trigger": "product_entity"
+        },
+        "phraseList": "licensingStatement"
+      },
+      "basis": "FAA 2001; FSG-03 Safeguard 2",
+      "reviewerNote": "Where a product is named, the poster must be identified as a Prudential representative with licensing status stated. The check runs against Prudential's approved licensing wording.",
+      "suggestedFix": "Add the representative's identification and licensing status, using approved wording, to the same asset.",
+      "enabled": true
+    },
+    {
+      "id": "A-03",
+      "type": "requirement",
+      "title": "Past-performance caveat present",
+      "description": "Where historical figures, charts or a track record appear, the past-performance caveat appears in the same asset",
+      "severity": "Medium",
+      "status": "active",
+      "dependency": "FSG-03 Safeguard 2. Needs approved past-performance caveat wording",
+      "detection": {
+        "modalities": ["image_text", "video_frame_text", "caption", "transcript"],
+        "signal": "Historical performance content detected and no past-performance caveat phrase in the same asset",
+        "template": "phrase_absence",
+        "params": {
+          "phraseList": "pastPerformanceCaveat",
+          "trigger": "historical_performance"
+        },
+        "phraseList": "pastPerformanceCaveat"
+      },
+      "basis": "FSG-03 Safeguard 2. Needs approved caveat wording",
+      "reviewerNote": "Where historical figures, charts or a track record appear, an approved past-performance caveat must appear in the same asset.",
+      "suggestedFix": "Add the approved past-performance caveat (e.g. that past performance is not indicative of future results) to the same asset.",
+      "enabled": true
+    },
+    {
+      "id": "A-04",
+      "type": "requirement",
+      "title": "Content dated and version-tagged for the register",
+      "description": "Content is dated and version-tagged for the digital advertising register",
+      "severity": "Low",
+      "status": "active",
+      "dependency": null,
+      "detection": {
+        "modalities": ["metadata"],
+        "signal": "Metadata completeness check at submission",
+        "template": "metadata",
+        "params": {
+          "requiredFields": ["date", "version"]
+        }
+      },
+      "basis": "FSG-03 Safeguard 4",
+      "reviewerNote": "The digital advertising register requires each asset to be dated and version-tagged so it can be traced. A traceability defect, not a consumer harm.",
+      "suggestedFix": "Add a submission date and version tag to the asset metadata before publishing.",
+      "enabled": true
+    },
+    {
+      "id": "A-05",
+      "type": "requirement",
+      "title": "Advice limitation on educational content",
+      "description": "An advice limitation (\"this is not financial advice\") is present on educational content",
+      "severity": "Medium",
+      "status": "advisory",
+      "dependency": null,
+      "detection": {
+        "modalities": ["image_text", "caption", "transcript"],
+        "signal": "Content classified as educational with no advice-limitation statement. Advisory because the classification is itself a judgement",
+        "template": "vision",
+        "params": {
+          "classification": "educational",
+          "requiresPhrase": "advice_limitation"
+        }
+      },
+      "basis": "ASAS Guide; FAA",
+      "reviewerNote": "Educational content should carry an advice-limitation statement. Whether content is educational is itself a judgement, so the engine flags but does not block.",
+      "suggestedFix": "Add an advice-limitation statement such as \"This is general information and not financial advice.\"",
+      "enabled": true
+    },
+    {
+      "id": "A-06",
+      "type": "requirement",
+      "title": "Paid or incentivised content is labelled",
+      "description": "Paid, sponsored or incentivised content is clearly labelled",
+      "severity": "Medium",
+      "status": "advisory",
+      "dependency": null,
+      "detection": {
+        "modalities": ["image_text", "caption", "transcript"],
+        "signal": "Referral code, promo link or affiliate tag present without a disclosure label",
+        "template": "regex",
+        "params": {
+          "patterns": ["referral_code", "promo_link", "affiliate_tag"],
+          "requiresDisclosureLabel": true
+        }
+      },
+      "basis": "FSG-03. Less relevant where content carries Prudential branding",
+      "reviewerNote": "Paid, sponsored or incentivised content must be labelled. Less relevant where the content already carries Prudential branding, so it is advisory.",
+      "suggestedFix": "Add a clear paid, sponsored or incentivised disclosure label alongside any referral code, promo link or affiliate tag.",
+      "enabled": true
+    },
+    {
+      "id": "A-07",
+      "type": "requirement",
+      "title": "Disclosures in frame and not truncated",
+      "description": "Disclosures are in frame, not truncated and not placed behind a link",
+      "severity": "Medium",
+      "status": "pending_config",
+      "dependency": "FSG-03 Safeguard 2. Needs Prudential legibility thresholds",
+      "detection": {
+        "modalities": ["image_text", "video_frame_text"],
+        "signal": "Disclosure text located; bounding box height ratio and contrast ratio against threshold",
+        "template": "vision",
+        "params": {
+          "check": "bbox_height_ratio_and_contrast"
+        }
+      },
+      "basis": "FSG-03 Safeguard 2. Needs Prudential legibility thresholds",
+      "reviewerNote": "Disclosures must be in frame, legible and not hidden behind a link. Requires Prudential's legibility thresholds (height and contrast) before it can be enforced.",
+      "suggestedFix": "Place disclosures in frame at the required size and contrast, not behind a link.",
+      "enabled": false
+    },
+    {
+      "id": "A-08",
+      "type": "requirement",
+      "title": "Video disclosures persist long enough to read",
+      "description": "Video disclosures remain on screen long enough to be read",
+      "severity": "Medium",
+      "status": "pending_config",
+      "dependency": "FSG-03 Safeguard 2. Needs Prudential minimum duration",
+      "detection": {
+        "modalities": ["video_frame_text"],
+        "signal": "Frame-persistence count for the disclosure region against a minimum duration",
+        "template": "vision",
+        "params": {
+          "check": "disclosure_frame_persistence"
+        }
+      },
+      "basis": "FSG-03 Safeguard 2. Needs Prudential minimum duration",
+      "reviewerNote": "A video disclosure must remain on screen long enough to be read. Requires Prudential's minimum on-screen duration before it can be enforced.",
+      "suggestedFix": "Keep the disclosure on screen for at least the required minimum duration.",
+      "enabled": false
+    },
+    {
+      "id": "A-09",
+      "type": "requirement",
+      "title": "Product name matches approved register",
+      "description": "Product name matches the Prudential approved-product register exactly",
+      "severity": "Medium",
+      "status": "pending_config",
+      "dependency": "Needs approved-product register feed",
+      "detection": {
+        "modalities": ["image_text", "caption", "transcript"],
+        "signal": "Fuzzy match against product master; flags near-misses and retired product names",
+        "template": "entity",
+        "params": {
+          "check": "fuzzy_match_product_master"
+        }
+      },
+      "basis": "Needs approved-product register feed",
+      "reviewerNote": "Product names must match the approved-product register exactly, to catch near-misses and retired names. Requires the approved-product register feed.",
+      "suggestedFix": "Use the exact approved product name from the current product register.",
+      "enabled": false
+    },
+    {
+      "id": "A-10",
+      "type": "requirement",
+      "title": "Copy aligns with approved copy library",
+      "description": "Copy aligns with the approved copy library for that product",
+      "severity": "Low",
+      "status": "pending_config",
+      "dependency": "Needs approved copy library feed",
+      "detection": {
+        "modalities": ["image_text", "caption", "transcript"],
+        "signal": "Similarity score against the approved copy corpus below threshold",
+        "template": "vision",
+        "params": {
+          "check": "copy_similarity_score"
+        }
+      },
+      "basis": "Needs approved copy library feed",
+      "reviewerNote": "Copy should align with the approved copy library for the product. Requires the approved copy library feed.",
+      "suggestedFix": "Bring the copy back in line with the approved copy library for that product.",
+      "enabled": false
+    },
+    {
+      "id": "A-11",
+      "type": "requirement",
+      "title": "Approved template or asset ID traceable",
+      "description": "The approved template or creative asset ID is traceable",
+      "severity": "Low",
+      "status": "pending_config",
+      "dependency": "FSG-03 Safeguard 4. Needs creative library",
+      "detection": {
+        "modalities": ["image_text", "video_frame_text"],
+        "signal": "Watermark or asset-ID lookup against the creative library",
+        "template": "vision",
+        "params": {
+          "check": "watermark_or_asset_id_lookup"
+        }
+      },
+      "basis": "FSG-03 Safeguard 4. Needs creative library",
+      "reviewerNote": "The approved template or creative asset ID must be traceable. Requires the creative library to look up.",
+      "suggestedFix": "Use an approved template with a traceable asset ID or watermark.",
+      "enabled": false
+    },
+    {
+      "id": "A-12",
+      "type": "requirement",
+      "title": "Lead route points to an official channel",
+      "description": "Lead or contact route points to an official Prudential channel",
+      "severity": "Low",
+      "status": "pending_config",
+      "dependency": "FAA-N02 introducer rules. Needs maintained allowlist",
+      "detection": {
+        "modalities": ["caption", "image_text"],
+        "signal": "URL and social handle allowlist check",
+        "template": "entity",
+        "params": {
+          "check": "url_and_handle_allowlist"
+        }
+      },
+      "basis": "FAA-N02 introducer rules. Needs maintained allowlist",
+      "reviewerNote": "Lead and contact routes must point to an official Prudential channel, per the introducer rules. Requires a maintained URL and handle allowlist.",
+      "suggestedFix": "Point the lead or contact route to an official Prudential channel on the allowlist.",
+      "enabled": false
+    }
+  ]
+}
