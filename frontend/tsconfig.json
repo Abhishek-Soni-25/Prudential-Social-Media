@@ -14,8 +14,14 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@compliance/*": ["../lib/compliance/*"],
+      "@rules/*": ["../config/rules/*"]
+    }
   },
-  "include": ["src"],
+  "include": ["src", "../lib/compliance"],
+  "exclude": ["../lib/compliance/**/*.test.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

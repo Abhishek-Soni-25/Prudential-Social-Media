@@ -6,4 +6,12 @@ __pycache__/
 *.session-journal
 data/cases/
 data/state/
+data/compliance/
 *.log
+
+# Generated TypeScript build artifacts (compiled from *.ts sources)
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+frontend/vitest.config.js
+frontend/vitest.config.d.ts

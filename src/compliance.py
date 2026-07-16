@@ -1,19 +1,27 @@
-"""Media compliance analyzer.
+"""Media compliance extraction.
 
-Checks a marketing creative (image, or a frame extracted from a video / video link on the
-client) against the Indian securities-market advertising rules (SEBI Mutual Fund Advertisement
-Code + related NSE / BSE / NSDL / CDSL investor-communication norms). Uses a Groq vision model
-to read the creative and judge each rule PASS / FAIL / UNCLEAR, then returns a structured
-verdict for the UI.
+Raw extraction layer for the Media Compliance module. This backend does NOT judge
+compliance — the rule engine, matcher and decision logic live in TypeScript under
+``lib/compliance/`` and run against the normalised asset produced here.
 
-The rule checklist lives in COMPLIANCE_CHECKS and is grounded in the SEBI advertisement code
-(Sixth Schedule of the SEBI (Mutual Funds) Regulations, 1996 and the SEBI Master Circular for
-Mutual Funds). Final sign-off always rests with a human compliance officer.
+Responsibilities of this module:
+  * OCR / scene-read one or more image or video frames with a Groq vision model
+    (``extract_text``) — verbatim visible text plus a few coarse visual signals, no
+    interpretation.
+  * Transcribe an uploaded video's voice-over with Groq Whisper (``transcribe``).
+  * Pull a caption transcript + thumbnail for a YouTube link (``fetch_youtube``).
+  * Assemble the normalised asset the TS engine expects (``build_extraction``) and
+    compute a conservative ``extractionStatus`` (complete / partial / failed).
+
+Rule content for Prudential Assurance Singapore / MAS FSG-03 lives in
+``config/rules/prudential-sg-v1.json`` (and the runtime overlay
+``data/compliance/ruleset-active.json``); it is served by the API, not embedded here.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -23,91 +31,12 @@ from .config import env
 
 log = logging.getLogger(__name__)
 
-# The mandatory standard warning for mutual-fund creatives (SEBI advertisement code).
-STANDARD_WARNING = (
-    "Mutual Fund investments are subject to market risks, "
-    "read all scheme related documents carefully."
+# Vision OCR / scene-reading system prompt. This engine reads text; it never judges.
+_OCR_SYSTEM = (
+    "You are an OCR and scene-reading engine. Return ONLY the text visible in the "
+    "image(s), verbatim, plus a short list of any obvious visual entities (logos, chat "
+    "UI, faces, charts). Do not interpret, judge, or add commentary."
 )
-
-# Compliance checklist. Each item: id, title, look_for (what the model should verify),
-# source (regulator), conditional (only assessed if the trigger applies).
-# Grounded in the SEBI (Mutual Funds) Regulations 1996 Sixth Schedule (Advertisement Code,
-# clauses a-j), the SEBI Master Circular for Mutual Funds Chapter 13 (Advertisements), the
-# Product-Labelling / Risk-o-meter circular (Oct 2020), the SEBI Advertisement Code for IA/RA
-# (2023), and the NSE / BSE Codes of Advertisement. (No dedicated NSDL/CDSL ad code exists;
-# depository communications follow the Investor Charter / cautionary-advisory norms.)
-COMPLIANCE_CHECKS: list[dict[str, Any]] = [
-    {"id": "standard_warning", "title": "Standard warning must be present and legible",
-     "look_for": f"The exact 14-word warning '{STANDARD_WARNING}' must appear, legibly, with no words added or deleted. Flag the older '…read the offer document carefully' wording as non-compliant.",
-     "source": "SEBI (MF) Regs 1996, Sixth Schedule cl. (i)"},
-    {"id": "av_warning_duration", "title": "In video, the warning must run ≥5 seconds",
-     "look_for": "For audio-visual/video creatives, the standard warning (on-screen and voice-over) must run for at least 5 seconds and be understandable.",
-     "source": "Sixth Schedule cl. (j) / SEBI Cir. 04-Feb-2010", "conditional": "audio-visual / video creative"},
-    {"id": "no_assured_returns", "title": "No assured / guaranteed returns",
-     "look_for": "No slogan or statement implying assured, guaranteed or risk-free returns; nothing exaggerated or unwarranted.",
-     "source": "Sixth Schedule cl. (d)"},
-    {"id": "no_misleading", "title": "No false, misleading or deceptive content",
-     "look_for": "No statements that are false, misleading, biased, deceptive, or based on assumptions/projections; nothing misleading by omission.",
-     "source": "Sixth Schedule cl. (b), (c)"},
-    {"id": "no_testimonials_rankings", "title": "No testimonials; rankings must state basis & date",
-     "look_for": "No testimonials. Any ranking/award cited must state the ranking entity, the basis, and the date.",
-     "source": "Sixth Schedule cl. (b)"},
-    {"id": "no_celebrity", "title": "No celebrity endorsing a scheme / AMC",
-     "look_for": "No celebrity in a scheme/AMC ad (industry-level AMFI awareness ads are the only exception, with SEBI approval).",
-     "source": "Sixth Schedule cl. (e)"},
-    {"id": "fair_comparison", "title": "No discrediting or unfair comparison with other schemes/AMCs",
-     "look_for": "The creative must not discredit other ads or make unfair/incomplete comparisons with other schemes or AMCs.",
-     "source": "Sixth Schedule cl. (h)"},
-    {"id": "riskometer", "title": "The scheme's Risk-o-meter must be displayed",
-     "look_for": "The scheme's six-level Risk-o-meter (Low → Very High) must be shown and match the scheme's labelling.",
-     "source": "SEBI Product-Labelling circular, 05-Oct-2020"},
-    {"id": "performance_format", "title": "Performance shown as CAGR + past-performance disclaimer",
-     "look_for": "If returns/performance figures are shown: they must be CAGR (1/3/5 yr & since inception) with a point-to-point ₹10,000 return, and carry a 'past performance may or may not be sustained' disclaimer.",
-     "source": "SEBI Master Circular for MFs, cl. 13.3", "conditional": "performance figures shown"},
-    {"id": "no_future_dividend", "title": "No promise / indication of future dividend or IDCW",
-     "look_for": "No promise or indication of future dividend/IDCW amounts. If past payout is shown, ₹/unit, face value and NAV-at-declaration must be disclosed.",
-     "source": "SEBI Master Circular for MFs, cl. 13.2"},
-    {"id": "no_indicative_portfolio", "title": "No indicative portfolio or indicative yield",
-     "look_for": "No indicative portfolio or indicative yield stated anywhere in the creative.",
-     "source": "SEBI Master Circular for MFs, cl. 13.6.1"},
-    {"id": "no_superlatives", "title": "No unsubstantiated superlatives",
-     "look_for": "No superlatives (best, No.1, top, safest, 'India's Top …') without a stated, verifiable basis.",
-     "source": "Sixth Schedule cl. (b), (c)"},
-    {"id": "nfo_disclosures", "title": "NFO creatives must show open/close dates & key details",
-     "look_for": "For a New Fund Offer (NFO): scheme category, investment objective, NFO open & close dates, and where to get the SID must be shown.",
-     "source": "SEBI Master Circular for MFs, Ch. 13 (NFO)", "conditional": "NFO creative"},
-    {"id": "legible_disclaimers", "title": "Disclaimers and statutory text must be legible",
-     "look_for": "Disclaimers, risk factors and statutory text must be legible (adequate font size and contrast; risk factors in equal font size for NFOs).",
-     "source": "SEBI (MF) Regs / Master Circular"},
-    {"id": "consistency", "title": "Claims consistent with scheme documents",
-     "look_for": "Claims must be timely and consistent with the SID / SAI / KIM; nothing that misrepresents the nature of the scheme.",
-     "source": "Sixth Schedule cl. (g)"},
-    {"id": "intermediary_disclosure", "title": "Intermediary identity & SEBI registration disclosed",
-     "look_for": "If issued by a distributor / RIA / broker, their name and SEBI registration number should be shown; IA/RA ads need the 'registration does not guarantee returns' disclaimer.",
-     "source": "SEBI IA/RA Advertisement Code 2023; NSE / BSE Codes of Advertisement"},
-]
-
-_SYSTEM = """You are an automated advertising-compliance screener for Indian securities-market \
-marketing creatives (mutual funds and securities). You screen a single creative (an image, or a \
-representative frame from a video) against the SEBI Mutual Fund Advertisement Code and related \
-NSE / BSE / NSDL / CDSL investor-communication norms.
-
-You will be given a numbered checklist. For EACH check, look at the creative and decide:
-- "PASS"    — the creative clearly satisfies the rule.
-- "FAIL"    — the creative clearly violates the rule.
-- "UNCLEAR" — cannot be determined from the creative, or the rule's trigger does not apply \
-(e.g. no performance figures shown, so a performance disclaimer is not required) — say why.
-
-Ground every judgement in what is actually visible. Do not invent text that is not present. \
-Read small print and disclaimers carefully. For conditional rules, if the trigger is absent, \
-return UNCLEAR with a short note that the trigger does not apply.
-
-Respond with ONLY a JSON object of this exact shape:
-{"issues_found": boolean,
- "summary": "2-3 sentence plain-English verdict",
- "checks": [{"id": "<check id>", "status": "PASS"|"FAIL"|"UNCLEAR", "detail": "short grounded note"}]}
-Include one entry per check, using the given ids. issues_found is true if any check is FAIL or a \
-material UNCLEAR. Do not add commentary outside the JSON."""
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -131,21 +60,35 @@ def _keys() -> list[str]:
     return keys
 
 
-def _checklist_text() -> str:
-    lines = []
-    for i, c in enumerate(COMPLIANCE_CHECKS, 1):
-        cond = f" (only if: {c['conditional']})" if c.get("conditional") else ""
-        lines.append(f"{i}. [{c['id']}] {c['title']}{cond} — {c['look_for']} (Source: {c['source']})")
-    return "\n".join(lines)
+def _extract_json(raw: str) -> dict[str, Any]:
+    """Best-effort JSON extraction from a model response. Empty dict if unusable."""
+    match = _JSON_RE.search(raw or "")
+    if not match:
+        return {}
+    try:
+        data = json.loads(match.group(0))
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, ValueError):
+        return {}
 
 
-def analyze(images: list[str] | None, note: str | None, cfg: dict,
-            transcript: str | None = None) -> dict[str, Any]:
-    """Screen one or more frames (+ an optional voice-over transcript) and return a verdict."""
+def extract_text(images: list[str] | None, cfg: dict) -> dict[str, Any]:
+    """OCR / scene-read one or more image frames with the Groq vision model.
+
+    Returns a dict:
+        {"imageText": [{"text": str, "frame": int, "confidence": float}, ...],
+         "signals": {"messaging_ui": bool, "face": bool, "chart": bool}}
+    It does NOT judge compliance. If the model returns nothing usable, ``imageText`` is
+    empty so the caller can mark the extraction status ``partial``.
+    """
     comp_cfg = cfg.get("compliance", {})
     model = comp_cfg.get("vision_model", "meta-llama/llama-4-scout-17b-16e-instruct")
     max_tokens = comp_cfg.get("max_tokens", 1600)
-    images = [i for i in (images or []) if i][:5]   # vision models cap at ~5 images
+    images = [i for i in (images or []) if i][:5]  # vision models cap at ~5 images
+
+    empty = {"imageText": [], "signals": {"messaging_ui": False, "face": False, "chart": False}}
+    if not images:
+        return empty
 
     keys = _keys()
     if not keys:
@@ -155,21 +98,17 @@ def analyze(images: list[str] | None, note: str | None, cfg: dict,
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("groq not installed; pip install groq") from exc
 
-    intro = "Screen this marketing creative against the checklist below."
-    if len(images) > 1:
-        intro = (f"Screen this video creative against the checklist below. You are given "
-                 f"{len(images)} frames sampled across the video" +
-                 (" and its voice-over transcript" if transcript else "") + ". Consider BOTH the "
-                 "frames and the transcript (e.g. the standard warning may be spoken, not shown).")
-    elif transcript:
-        intro = ("Screen this video creative against the checklist below, using the frame and its "
-                 "voice-over transcript together.")
-    text = intro + "\n" + (f"Context: {note}\n" if note else "")
-    if transcript:
-        text += f"\nVOICE-OVER TRANSCRIPT:\n{transcript[:6000]}\n"
-    text += "\nCHECKLIST:\n" + _checklist_text()
-
-    user_content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    instruction = (
+        f"Read the {len(images)} image(s) below. Return ONLY the visible text, verbatim, "
+        "and coarse visual signals. Respond with ONLY a JSON object of this exact shape:\n"
+        '{"imageText": [{"text": "<one line of visible text>", "frame": <0-based index of '
+        'the image the line came from>, "confidence": <0..1>}], '
+        '"signals": {"messaging_ui": <true if a chat/messaging app UI is visible>, '
+        '"face": <true if a human face is visible>, "chart": <true if a chart/graph is '
+        "visible>}}\n"
+        "One imageText entry per distinct line of text. Do not interpret or judge."
+    )
+    user_content: list[dict[str, Any]] = [{"type": "text", "text": instruction}]
     for img in images:
         user_content.append({"type": "image_url", "image_url": {"url": img}})
 
@@ -180,25 +119,169 @@ def analyze(images: list[str] | None, note: str | None, cfg: dict,
             resp = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": _SYSTEM},
+                    {"role": "system", "content": _OCR_SYSTEM},
                     {"role": "user", "content": user_content},
                 ],
                 temperature=0,
                 max_tokens=max_tokens,
                 response_format={"type": "json_object"},
             )
-            out = _parse(resp.choices[0].message.content or "")
-            if transcript:
-                out["transcript"] = transcript
-            out["frames_used"] = len(images)
-            return out
+            return _parse_ocr(resp.choices[0].message.content or "", len(images))
         except Exception as exc:  # try next key on rate-limit/quota
             last_exc = exc
             s = str(exc).lower()
             if "429" in s or "rate" in s or "quota" in s or "per day" in s:
                 continue
             raise
-    raise RuntimeError(f"Compliance vision call failed: {last_exc}")
+    raise RuntimeError(f"Vision OCR call failed: {last_exc}")
+
+
+def _parse_ocr(raw: str, n_images: int) -> dict[str, Any]:
+    """Defensively parse the vision model's OCR JSON into the extract_text shape."""
+    data = _extract_json(raw)
+    image_text: list[dict[str, Any]] = []
+    for item in data.get("imageText", []) or []:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text", "")).strip()
+        if not text:
+            continue
+        frame = item.get("frame")
+        try:
+            frame = int(frame)
+            if frame < 0 or frame >= max(n_images, 1):
+                frame = 0
+        except (TypeError, ValueError):
+            frame = 0
+        conf = item.get("confidence")
+        try:
+            conf = float(conf)
+            conf = min(1.0, max(0.0, conf))
+        except (TypeError, ValueError):
+            conf = None
+        image_text.append({"text": text, "frame": frame, "bbox": None, "confidence": conf})
+
+    sig = data.get("signals") if isinstance(data.get("signals"), dict) else {}
+    signals = {
+        "messaging_ui": bool(sig.get("messaging_ui")),
+        "face": bool(sig.get("face")),
+        "chart": bool(sig.get("chart")),
+    }
+    return {"imageText": image_text, "signals": signals}
+
+
+def build_extraction(
+    assetId: str | None,
+    adviserId: str | None,
+    channel: str | None,
+    images: list[str] | None,
+    transcript: str | None,
+    captionText: str | None,
+    frames: list[str] | None,
+    metadata: dict | None,
+    cfg: dict,
+    link_failed: bool = False,
+) -> dict[str, Any]:
+    """Assemble the normalised asset the TS rule engine expects.
+
+    ``images`` are the frames to OCR (image mode: the images themselves; video/link
+    mode: sampled frames / thumbnail). ``frames`` is what gets echoed back as the
+    asset's frame list; if not given it defaults to ``images``.
+
+    extractionStatus is computed conservatively:
+      * 'failed'  — link_failed, OR frames/images were requested but none decoded AND
+                    there is no transcript.
+      * 'partial' — OCR came back empty / low-confidence, a video had no audio track
+                    (empty transcript), or the decoded frame count is short.
+      * 'complete'— otherwise.
+    When unsure, 'partial'. Never silently pass.
+    """
+    images = [i for i in (images or []) if i]
+    frames = [f for f in (frames if frames is not None else images) if f]
+    transcript = (transcript or "").strip()
+    captionText = (captionText or "").strip()
+    metadata = dict(metadata or {})
+
+    # OCR the frames (unless there are none).
+    ocr: dict[str, Any] = {"imageText": [], "signals": {}}
+    ocr_attempted = bool(images)
+    ocr_failed = False
+    if images:
+        try:
+            ocr = extract_text(images, cfg)
+        except Exception as exc:  # noqa: BLE001 — extraction must degrade, not crash
+            log.warning("extract_text failed during build_extraction: %s", exc)
+            ocr_failed = True
+
+    image_text = ocr.get("imageText", []) or []
+    signals = ocr.get("signals", {}) or {}
+
+    if assetId is None:
+        assetId = _asset_id(images, frames, transcript, captionText, metadata)
+
+    # ---- extractionStatus (conservative) ----
+    requested = ocr_attempted or (frames is not None and len(frames) > 0)
+    decoded_none = ocr_attempted and len(images) == 0  # frames requested but none decoded
+
+    status = "complete"
+    if link_failed or (requested and not images and not transcript):
+        status = "failed"
+    else:
+        low_conf = image_text and all(
+            (c is not None and c < 0.5) for c in
+            [t.get("confidence") for t in image_text]
+        )
+        expected_frames = metadata.get("expectedFrames")
+        short_frames = False
+        if isinstance(expected_frames, int) and expected_frames > 0:
+            short_frames = len(images) < expected_frames
+
+        if ocr_failed:
+            status = "partial"
+        elif ocr_attempted and not image_text:
+            status = "partial"  # OCR came back empty
+        elif low_conf:
+            status = "partial"  # OCR low-confidence
+        elif metadata.get("hasAudio") is False or (
+            metadata.get("isVideo") and not transcript
+        ):
+            status = "partial"  # video with no audio track / empty transcript
+        elif short_frames:
+            status = "partial"  # frames list shorter than expected
+        elif decoded_none:
+            status = "partial"
+
+    return {
+        "assetId": assetId,
+        "adviserId": adviserId or "",
+        "channel": channel or "",
+        "imageText": image_text,
+        "transcript": transcript,
+        "captionText": captionText,
+        "frames": frames,
+        "extractionStatus": status,
+        "metadata": metadata,
+        "signals": signals,
+    }
+
+
+def _asset_id(
+    images: list[str], frames: list[str], transcript: str, captionText: str,
+    metadata: dict,
+) -> str:
+    """Deterministic asset id from content + client-supplied submittedAt (no clock call)."""
+    seed = ""
+    if images:
+        seed = images[0]
+    elif frames:
+        seed = frames[0]
+    elif transcript:
+        seed = transcript
+    elif captionText:
+        seed = captionText
+    submitted = str(metadata.get("submittedAt") or metadata.get("date") or "")
+    digest = hashlib.sha256((seed + "|" + submitted).encode("utf-8")).hexdigest()
+    return "asset_" + digest[:16]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -289,33 +372,6 @@ def transcribe(file_bytes: bytes, filename: str, cfg: dict) -> str:
             return ""
     log.warning("Transcription failed on all keys: %s", last_exc)
     return ""
-
-
-def _parse(raw: str) -> dict[str, Any]:
-    match = _JSON_RE.search(raw)
-    data = json.loads(match.group(0)) if match else {}
-    by_id = {str(c.get("id")): c for c in data.get("checks", []) if isinstance(c, dict)}
-    checks = []
-    for c in COMPLIANCE_CHECKS:
-        r = by_id.get(c["id"], {})
-        status = str(r.get("status", "UNCLEAR")).upper()
-        if status not in ("PASS", "FAIL", "UNCLEAR"):
-            status = "UNCLEAR"
-        checks.append({
-            "id": c["id"], "title": c["title"], "source": c["source"],
-            "status": status, "detail": str(r.get("detail", "")).strip(),
-        })
-    fails = [c for c in checks if c["status"] == "FAIL"]
-    issues = bool(data.get("issues_found")) or len(fails) > 0
-    return {
-        "issues_found": issues,
-        "summary": str(data.get("summary", "")).strip() or (
-            "Automated screening complete." if not issues else "Potential compliance issues were found."),
-        "checks": checks,
-        "passed": sum(1 for c in checks if c["status"] == "PASS"),
-        "failed": len(fails),
-        "unclear": sum(1 for c in checks if c["status"] == "UNCLEAR"),
-    }
 
 
 def as_data_url(raw_bytes: bytes, mime: str = "image/jpeg") -> str:

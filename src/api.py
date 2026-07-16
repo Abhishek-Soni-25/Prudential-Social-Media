@@ -18,15 +18,16 @@ import json
 import logging
 import random
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .config import load_config, CASES_DIR, PROJECT_ROOT
+from .config import load_config, CASES_DIR, DATA_DIR, PROJECT_ROOT
 from .connectors import CONNECTOR_REGISTRY, ConnectorUnavailable, DemoConnector
 from .connectors.n8n_connector import _fetch as _n8n_fetch, _channel_of, _author_from_url
 from .models import Post
@@ -418,67 +419,232 @@ def publish_outbox() -> list[dict[str, Any]]:
     return publish_store.load_outbox()
 
 
-@app.get("/api/compliance/checks")
-def compliance_checks() -> dict[str, Any]:
-    """The compliance checklist + the mandatory standard warning (for the UI)."""
-    return {
-        "standard_warning": compliance_mod.STANDARD_WARNING,
-        "checks": [{"id": c["id"], "title": c["title"], "source": c["source"]} for c in compliance_mod.COMPLIANCE_CHECKS],
-    }
+# --- Media Compliance (FSG-03) ------------------------------------------------------
+# This backend performs RAW EXTRACTION only. The rule engine, matcher and decision
+# logic live in TypeScript under lib/compliance/ and consume the extraction dict.
+# It also serves the rule-set overlay and maintains the append-only FSG-03 Safeguard 4
+# audit register.
+
+_COMPLIANCE_DIR = DATA_DIR / "compliance"
+_RULESET_ACTIVE = _COMPLIANCE_DIR / "ruleset-active.json"
+_RULESET_DEFAULT = PROJECT_ROOT / "config" / "rules" / "prudential-sg-v1.json"
+_AUDIT_LOG = _COMPLIANCE_DIR / "audit.jsonl"
 
 
-@app.post("/api/compliance/check")
-def compliance_check(body: dict[str, Any]) -> dict[str, Any]:
-    """Screen an image creative (or client-extracted video frames) against the ad rules."""
+def _compliance_dir() -> None:
+    _COMPLIANCE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.post("/api/compliance/extract")
+def compliance_extract(body: dict[str, Any]) -> dict[str, Any]:
+    """Image mode: OCR the supplied images and return a normalised extraction asset."""
     images = body.get("images") or ([body["image"]] if body.get("image") else [])
-    note = body.get("note")
-    transcript = body.get("transcript")
-    if not images and not transcript:
-        raise HTTPException(status_code=400, detail="Provide an image (data URL) to screen.")
+    if not images:
+        raise HTTPException(status_code=400, detail="Provide at least one image (data URL).")
     try:
-        return compliance_mod.analyze(images, note, _cfg, transcript=transcript)
+        return compliance_mod.build_extraction(
+            assetId=body.get("assetId"),
+            adviserId=body.get("adviserId"),
+            channel=body.get("channel"),
+            images=images,
+            transcript=None,
+            captionText=body.get("captionText"),
+            frames=images,
+            metadata=body.get("metadata"),
+            cfg=_cfg,
+        )
     except Exception as exc:  # noqa: BLE001
-        log.exception("compliance check failed")
-        raise HTTPException(status_code=500, detail=f"Compliance check failed: {exc}")
+        log.exception("compliance extract failed")
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {exc}")
 
 
-@app.post("/api/compliance/link")
-def compliance_link(body: dict[str, Any]) -> dict[str, Any]:
-    """Screen a video link (e.g. YouTube): pull the caption transcript + a thumbnail frame."""
-    url = (body.get("url") or "").strip()
-    if not url:
-        raise HTTPException(status_code=400, detail="Provide a video URL.")
+@app.post("/api/compliance/extract/video")
+async def compliance_extract_video(
+    file: UploadFile = File(...),
+    frames: str = Form("[]"),
+    captionText: str = Form(""),
+    adviserId: str = Form(""),
+    channel: str = Form(""),
+    metadata: str = Form("{}"),
+) -> dict[str, Any]:
+    """Video mode: transcribe the file, OCR the frames, union into one extraction asset."""
     try:
-        yt = compliance_mod.fetch_youtube(url)
-        images = [yt["thumbnail"]] if yt.get("thumbnail") else []
-        transcript = yt.get("transcript") or ""
-        note = f"Video link: {url}." + ("" if transcript else " No captions were available for this video, so spoken-audio checks are UNCLEAR.")
-        result = compliance_mod.analyze(images, note, _cfg, transcript=transcript or None)
-        result["transcript"] = transcript
-        result["frame"] = yt.get("thumbnail")
-        return result
-    except Exception as exc:  # noqa: BLE001
-        log.exception("compliance link check failed")
-        raise HTTPException(status_code=500, detail=f"Video-link check failed: {exc}")
-
-
-@app.post("/api/compliance/video")
-async def compliance_video(file: UploadFile = File(...), frames: str = Form("[]")) -> dict[str, Any]:
-    """Screen an uploaded video: transcribe its voice-over (Whisper) + screen sampled frames."""
-    try:
-        img_list = json.loads(frames) if frames else []
+        frame_list = json.loads(frames) if frames else []
+        if not isinstance(frame_list, list):
+            frame_list = []
     except json.JSONDecodeError:
-        img_list = []
+        frame_list = []
+    try:
+        meta = json.loads(metadata) if metadata else {}
+        if not isinstance(meta, dict):
+            meta = {}
+    except json.JSONDecodeError:
+        meta = {}
+    meta.setdefault("isVideo", True)
     try:
         data = await file.read()
         transcript = compliance_mod.transcribe(data, file.filename or "video.mp4", _cfg)
-        note = "Uploaded video creative — frames sampled across the video."
-        result = compliance_mod.analyze(img_list, note, _cfg, transcript=transcript or None)
-        result["transcript"] = transcript
-        return result
+        return compliance_mod.build_extraction(
+            assetId=meta.get("assetId"),
+            adviserId=adviserId,
+            channel=channel,
+            images=frame_list,
+            transcript=transcript,
+            captionText=captionText,
+            frames=frame_list,
+            metadata=meta,
+            cfg=_cfg,
+        )
     except Exception as exc:  # noqa: BLE001
-        log.exception("compliance video check failed")
-        raise HTTPException(status_code=500, detail=f"Video check failed: {exc}")
+        log.exception("compliance video extract failed")
+        raise HTTPException(status_code=500, detail=f"Video extraction failed: {exc}")
+
+
+@app.post("/api/compliance/extract/link")
+def compliance_extract_link(body: dict[str, Any]) -> dict[str, Any]:
+    """Link mode: pull a YouTube caption transcript + thumbnail into an extraction asset."""
+    url = (body.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Provide a video URL.")
+    metadata = dict(body.get("metadata") or {})
+    metadata.setdefault("sourceUrl", url)
+    metadata.setdefault("isVideo", True)
+    try:
+        yt = compliance_mod.fetch_youtube(url)
+    except Exception as exc:  # noqa: BLE001 — a failed fetch is a 'failed' extraction, not a 500
+        log.warning("compliance link fetch failed: %s", exc)
+        yt = {}
+    thumb = yt.get("thumbnail")
+    transcript = yt.get("transcript") or ""
+    link_failed = not thumb and not transcript
+    frames = [thumb] if thumb else []
+    try:
+        return compliance_mod.build_extraction(
+            assetId=body.get("assetId"),
+            adviserId=body.get("adviserId"),
+            channel=body.get("channel"),
+            images=frames,
+            transcript=transcript,
+            captionText=body.get("captionText"),
+            frames=frames,
+            metadata=metadata,
+            cfg=_cfg,
+            link_failed=link_failed,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.exception("compliance link extract failed")
+        raise HTTPException(status_code=500, detail=f"Link extraction failed: {exc}")
+
+
+@app.get("/api/compliance/ruleset")
+def compliance_get_ruleset() -> dict[str, Any]:
+    """Return the active rule set: the overlay if present, else the shipped default."""
+    path = _RULESET_ACTIVE if _RULESET_ACTIVE.exists() else _RULESET_DEFAULT
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("failed to read rule set")
+        raise HTTPException(status_code=500, detail=f"Could not read rule set: {exc}")
+
+
+@app.put("/api/compliance/ruleset")
+def compliance_put_ruleset(body: dict[str, Any]) -> dict[str, Any]:
+    """Persist a full rule set to the overlay and append a ruleset_change audit entry."""
+    if not isinstance(body, dict) or not body.get("version"):
+        raise HTTPException(status_code=400, detail="Rule set must include a 'version'.")
+    actor = body.get("_actor") or "compliance-officer"
+    ruleset = {k: v for k, v in body.items() if k != "_actor"}
+    _compliance_dir()
+    with _RULESET_ACTIVE.open("w", encoding="utf-8") as fh:
+        json.dump(ruleset, fh, ensure_ascii=False, indent=2)
+    _append_audit({
+        "type": "ruleset_change",
+        "version": ruleset.get("version"),
+        "at": datetime.now(timezone.utc).isoformat(),
+        "actor": actor,
+    })
+    return ruleset
+
+
+@app.post("/api/compliance/audit")
+def compliance_audit_append(body: dict[str, Any]) -> dict[str, Any]:
+    """Append one audit record (client has already pseudonymised PII) to the register."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Audit record must be a JSON object.")
+    record = dict(body)
+    record["receivedAt"] = datetime.now(timezone.utc).isoformat()
+    if not record.get("id"):
+        record["id"] = "aud_" + uuid.uuid4().hex[:16]
+    _append_audit(record)
+    return {"ok": True, "id": record["id"]}
+
+
+@app.get("/api/compliance/audit")
+def compliance_audit_list(limit: Optional[int] = Query(None, ge=1)) -> list[dict[str, Any]]:
+    """Return audit records, newest first, optionally capped by ?limit=."""
+    records = _read_audit()
+    records.reverse()  # newest first
+    if limit:
+        records = records[:limit]
+    return records
+
+
+@app.get("/api/compliance/audit.csv")
+def compliance_audit_csv() -> Response:
+    """Return the audit register as a CSV attachment (FSG-03 Safeguard 4 export)."""
+    import csv
+    import io
+
+    columns = [
+        "id", "assetHash", "adviserId", "channel", "submittedAt", "extractionStatus",
+        "computedOutcome", "finalDisposition", "ruleSetVersion", "hits", "notEvaluated",
+        "override",
+    ]
+    json_cols = {"hits", "notEvaluated", "override"}
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(columns)
+    for rec in _read_audit():
+        row = []
+        for col in columns:
+            val = rec.get(col)
+            if val is None:
+                row.append("")
+            elif col in json_cols or isinstance(val, (dict, list)):
+                row.append(json.dumps(val, ensure_ascii=False))
+            else:
+                row.append(str(val))
+        writer.writerow(row)
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="compliance-audit.csv"'},
+    )
+
+
+def _append_audit(record: dict[str, Any]) -> None:
+    """Append-only write of one JSON record; never rewrites existing lines."""
+    _compliance_dir()
+    with _AUDIT_LOG.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _read_audit() -> list[dict[str, Any]]:
+    """Parse the audit.jsonl register (oldest first). Skips malformed lines."""
+    if not _AUDIT_LOG.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    with _AUDIT_LOG.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                log.warning("skipping malformed audit line")
+    return out
 
 
 # --- Serve the built React frontend (single-container deploy on Cloud Run) ----------
