@@ -7,16 +7,13 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      // The MAS compliance engine and rule config live at the repo root (lib/, config/),
-      // per the deliverable paths. Alias keeps imports clean from within frontend/src.
-      "@compliance": fileURLToPath(new URL("../lib/compliance", import.meta.url)),
-      "@rules": fileURLToPath(new URL("../config/rules", import.meta.url)),
+      // The MAS compliance engine lives under src/compliance so the whole app is
+      // self-contained in the Docker build context (frontend/ is copied wholesale).
+      "@compliance": fileURLToPath(new URL("./src/compliance", import.meta.url)),
     },
   },
   server: {
     port: 5173,
-    // Allow serving files from the repo root (lib/, config/) — one level above frontend.
-    fs: { allow: [".."] },
     proxy: {
       "/api": "http://localhost:8000",
     },

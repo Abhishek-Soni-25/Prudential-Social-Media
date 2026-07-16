@@ -17,11 +17,10 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@compliance/*": ["../lib/compliance/*"],
-      "@rules/*": ["../config/rules/*"]
+      "@compliance/*": ["src/compliance/*"]
     }
   },
-  "include": ["src", "../lib/compliance"],
-  "exclude": ["../lib/compliance/**/*.test.ts"],
+  "include": ["src"],
+  "exclude": ["src/compliance/**/*.test.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

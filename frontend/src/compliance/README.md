@@ -4,7 +4,8 @@ Screens adviser and marketer creatives (image, video, or video link) against
 **MAS Guideline FSG-03** and Prudential advertising policy. The rule set is
 **configuration, not code**: 24 rules — 12 prohibitions (`D-01…D-12`) and 12
 required disclosures (`A-01…A-12`) — live in
-[`config/rules/prudential-sg-v1.json`](../../config/rules/prudential-sg-v1.json)
+[`prudential-sg-v1.json`](./prudential-sg-v1.json) (a build-time snapshot of the
+backend's `config/rules/prudential-sg-v1.json`)
 and are owned by Prudential Compliance through the **Rule Configuration** screen.
 
 ```
@@ -162,7 +163,7 @@ required when `status` is `pending_config`, `null` otherwise — **except**
 
 `auditLog.ts` writes one **append-only** record per evaluation (and per override)
 to the FSG-03 Safeguard 4 register — see
-[`docs/compliance-audit-schema.md`](../../docs/compliance-audit-schema.md) for the
+[`docs/compliance-audit-schema.md`](../../../../docs/compliance-audit-schema.md) for the
 record shape, storage location and CSV export. **Policy numbers and NRIC/FIN
 patterns are pseudonymised before anything is written** (`pseudonymise()`); the
 register stores the asset hash and the evidence crop, never raw client data. A

@@ -1,13 +1,16 @@
 /**
  * Rule-set loader and dependency logic.
  *
- * The default rule set ships as config/rules/prudential-sg-v1.json. This module
+ * The default rule set ships as prudential-sg-v1.json (a build-time snapshot of
+ * config/rules/prudential-sg-v1.json — the backend serves the authoritative,
+ * editable copy at /api/compliance/ruleset, which the app loads at runtime).
+ * This module
  * loads it, answers "is this rule's dependency met?", and provides the version
  * bump used by the admin screen. It holds no detection logic (that is ruleMatcher)
  * and no outcome logic (that is decisionEngine).
  */
 
-import defaultRuleSet from "../../config/rules/prudential-sg-v1.json";
+import defaultRuleSet from "./prudential-sg-v1.json";
 import type { NotEvaluated, PhraseListName, Rule, RuleSet } from "./types";
 
 /** The rule set as shipped. Treat as immutable; the admin screen layers edits on top. */
