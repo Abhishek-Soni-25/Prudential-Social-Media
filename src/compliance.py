@@ -296,17 +296,48 @@ def youtube_id(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _yt_proxy() -> str | None:
+    """Residential proxy URL for reaching YouTube from a blocked (datacenter) IP.
+
+    YouTube serves captions to residential IPs but blocks datacenter IPs (e.g.
+    Cloud Run). Without a proxy, a video link screened locally returns a transcript
+    but the same link screened in production returns an empty transcript and routes
+    to manual review — the two environments disagree. Set YT_PROXY_URL to a
+    residential proxy (e.g. a Bright Data zone: http://user:pass@host:port) so
+    production fetches the same captions a local machine does. Falls back to the
+    standard HTTPS_PROXY / HTTP_PROXY variables.
+    """
+    return (env("YT_PROXY_URL") or env("HTTPS_PROXY") or env("HTTP_PROXY") or "").strip() or None
+
+
 def _youtube_transcript(vid: str) -> str:
-    """Fetch a caption transcript, tolerant of both the 1.x and 0.6.x library APIs."""
+    """Fetch a caption transcript, tolerant of both the 1.x and 0.6.x library APIs.
+
+    Routes through YT_PROXY_URL when set, so it works the same from a datacenter IP
+    (production) as from a residential IP (local). See _yt_proxy().
+    """
     langs = ["en", "en-US", "en-GB", "hi"]
     try:
         from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
     except Exception as exc:  # pragma: no cover
         log.warning("youtube_transcript_api not installed: %s", exc)
         return ""
-    # 1.x instance API: YouTubeTranscriptApi().fetch(vid) -> iterable of snippets with .text
+
+    proxy = _yt_proxy()
+    proxy_config = None
+    if proxy:
+        try:
+            from youtube_transcript_api.proxies import GenericProxyConfig  # type: ignore
+            proxy_config = GenericProxyConfig(http_url=proxy, https_url=proxy)
+        except Exception as exc:  # pragma: no cover — older lib without proxy support
+            log.warning("YouTube proxy config unavailable, continuing direct: %s", exc)
+
+    # 1.x instance API: YouTubeTranscriptApi(proxy_config=...).fetch(vid)
     try:
-        api = YouTubeTranscriptApi()
+        try:
+            api = YouTubeTranscriptApi(proxy_config=proxy_config)
+        except TypeError:  # library without the proxy_config kwarg
+            api = YouTubeTranscriptApi()
         fetched = api.fetch(vid, languages=langs)
         parts = [getattr(s, "text", None) or (s.get("text") if isinstance(s, dict) else "") for s in fetched]
         text = " ".join(p for p in parts if p).strip()
@@ -314,9 +345,12 @@ def _youtube_transcript(vid: str) -> str:
             return text
     except Exception as exc:
         log.warning("YouTube transcript (fetch) unavailable for %s: %s", vid, exc)
-    # 0.6.x classmethod API fallback
+    # 0.6.x classmethod API fallback (honours proxies kwarg / HTTPS_PROXY env)
     try:
-        segs = YouTubeTranscriptApi.get_transcript(vid, languages=langs)  # type: ignore[attr-defined]
+        kwargs: dict[str, Any] = {"languages": langs}
+        if proxy:
+            kwargs["proxies"] = {"http": proxy, "https": proxy}
+        segs = YouTubeTranscriptApi.get_transcript(vid, **kwargs)  # type: ignore[attr-defined]
         return " ".join(s.get("text", "") for s in segs).strip()
     except Exception:
         return ""
@@ -332,12 +366,20 @@ def fetch_youtube(url: str) -> dict[str, Any]:
 
     transcript = _youtube_transcript(vid)
 
+    # Route the thumbnail fetch through the same proxy when one is configured.
+    proxy = _yt_proxy()
+    opener = (
+        urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+        if proxy
+        else urllib.request.build_opener()
+    )
+
     thumb_data = None
     for name in ("maxresdefault", "hqdefault", "mqdefault"):
         try:
             req = urllib.request.Request(f"https://img.youtube.com/vi/{vid}/{name}.jpg",
                                          headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with opener.open(req, timeout=15) as resp:
                 data = resp.read()
             if len(data) > 1500:  # YouTube returns a tiny placeholder for missing sizes
                 thumb_data = as_data_url(data, "image/jpeg")
