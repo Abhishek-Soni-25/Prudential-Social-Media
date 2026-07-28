@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { ExtractedAsset, Outcome, RuleSet } from "@compliance/types";
 import { loadActiveRuleSet, runScreening, type Check } from "@compliance/screening";
-import { extractImage, extractVideo, extractVideoLink } from "@compliance/extractors";
+import { extractImage, extractVideo } from "@compliance/extractors";
 import { buildAuditRecord, appendAudit } from "@compliance/auditLog";
 
-type Mode = "image" | "video" | "link";
+type Mode = "content" | "image" | "video";
 
 const fileToDataUrl = (f: File) =>
   new Promise<string>((res, rej) => {
@@ -31,9 +31,9 @@ const OUTCOME_CLASS: Record<Outcome, string> = {
 const nowIso = () => new Date().toISOString();
 
 export function MediaCompliance() {
-  const [mode, setMode] = useState<Mode>("image");
+  const [mode, setMode] = useState<Mode>("content");
   const [file, setFile] = useState<File | null>(null);
-  const [link, setLink] = useState("");
+  const [content, setContent] = useState("");
   const [imgPreview, setImgPreview] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -77,9 +77,19 @@ export function MediaCompliance() {
       const ctx = { adviserId: "unattributed", channel: "n/a", metadata: { date: submittedAt, version: rs.version } };
 
       let extracted: ExtractedAsset;
-      if (mode === "link") {
-        if (!link.trim()) throw new Error("Paste a video link first.");
-        extracted = await extractVideoLink({ url: link.trim(), ...ctx });
+      if (mode === "content") {
+        if (!content.trim()) throw new Error("Type or paste some content first.");
+        extracted = {
+          assetId: `content-${submittedAt}`,
+          adviserId: ctx.adviserId,
+          channel: ctx.channel,
+          imageText: [],
+          transcript: "",
+          captionText: content.trim(),
+          frames: [],
+          extractionStatus: "complete",
+          metadata: ctx.metadata,
+        };
       } else if (mode === "image") {
         if (!file) throw new Error("Attach an image first.");
         extracted = await extractImage({ dataUrl: await fileToDataUrl(file), ...ctx });
@@ -101,14 +111,14 @@ export function MediaCompliance() {
     }
   };
 
-  const canRun = mode === "link" ? !!link.trim() : !!file;
+  const canRun = mode === "content" ? !!content.trim() : !!file;
 
   return (
     <div className="mc">
       <div className="panel mc-uploader">
         <div className="panel-body">
           <div className="mc-tabs">
-            {(["image", "video", "link"] as Mode[]).map((m) => (
+            {(["content", "image", "video"] as Mode[]).map((m) => (
               <button
                 key={m}
                 className={`mc-tab ${mode === m ? "on" : ""}`}
@@ -117,21 +127,22 @@ export function MediaCompliance() {
                   setFile(null);
                   setImgPreview(null);
                   setVideoUrl(null);
+                  setContent("");
                   reset();
                 }}
               >
-                {m === "image" ? "🖼 Image" : m === "video" ? "🎬 Video" : "🔗 Video Link"}
+                {m === "content" ? "📝 Content" : m === "image" ? "🖼 Image" : "🎬 Video"}
               </button>
             ))}
           </div>
 
-          {mode === "link" ? (
-            <input
-              className="mc-linkinput"
-              placeholder="Paste a video URL (YouTube, MP4, …)"
-              value={link}
+          {mode === "content" ? (
+            <textarea
+              className="mc-content-input"
+              placeholder="Type or paste the post copy / caption to screen against the rules…"
+              value={content}
               onChange={(e) => {
-                setLink(e.target.value);
+                setContent(e.target.value);
                 reset();
               }}
             />
@@ -166,7 +177,7 @@ export function MediaCompliance() {
           <button className="btn mc-check" disabled={!canRun || busy} onClick={run}>
             {busy ? (
               <>
-                <span className="spinner" /> {mode === "image" ? "Screening…" : "Extracting & screening…"}
+                <span className="spinner" /> {mode === "video" ? "Extracting & screening…" : "Screening…"}
               </>
             ) : (
               "Check Compliance"
@@ -187,14 +198,9 @@ export function MediaCompliance() {
               <h3>Creative</h3>
             </div>
             <div className="panel-body">
+              {mode === "content" && <div className="mc-content-preview">{asset.captionText || "—"}</div>}
               {mode === "image" && imgPreview && <img src={imgPreview} alt="creative" className="mc-media" />}
               {mode === "video" && videoUrl && <video src={videoUrl} controls className="mc-media" />}
-              {mode === "link" &&
-                (asset.frames[0] ? (
-                  <img src={asset.frames[0]} alt="thumbnail" className="mc-media" />
-                ) : (
-                  <div className="muted">Thumbnail unavailable — screened from transcript.</div>
-                ))}
             </div>
           </div>
 

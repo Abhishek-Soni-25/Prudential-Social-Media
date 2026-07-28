@@ -111,7 +111,11 @@ function evaluateRule(
 
   switch (rule.detection.template) {
     case "lexicon":
-      return matchLexicon(rule, blocks, p);
+      // Prohibition: presence of a term is a hit. Requirement (a custom "Do"):
+      // absence of every required term is a hit.
+      return rule.type === "requirement"
+        ? matchLexiconAbsence(rule, haystack, p)
+        : matchLexicon(rule, blocks, p);
     case "regex":
       return matchRegex(rule, asset, blocks, haystack, p);
     case "entity":
@@ -145,6 +149,15 @@ function matchLexicon(rule: Rule, blocks: TextBlock[], p: Record<string, any>): 
     return makeHit(rule, CONFIDENCE.lexicon, block, `Matched prohibited term "${found}".`);
   }
   return null;
+}
+
+/** Requirement via lexicon: a hit when NONE of the required terms appear anywhere. */
+function matchLexiconAbsence(rule: Rule, haystack: string, p: Record<string, any>): RuleHit | null {
+  const terms: string[] = (p.terms ?? []).map((t: string) => t.toLowerCase()).filter(Boolean);
+  if (terms.length === 0) return null;
+  const present = terms.some((t) => haystack.includes(t));
+  if (present) return null;
+  return makeHit(rule, CONFIDENCE.phrase_absence, textOnly(""), `Required wording is missing (expected one of: ${terms.slice(0, 4).join(", ")}).`);
 }
 
 function matchRegex(

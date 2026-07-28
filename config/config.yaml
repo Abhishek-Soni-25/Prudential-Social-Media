@@ -20,8 +20,9 @@ analysis:
 # Media Compliance analyzer — screens marketing creatives against SEBI / NSE / BSE / NSDL /
 # CDSL advertising rules using a Groq vision model.
 compliance:
-  vision_model: "meta-llama/llama-4-scout-17b-16e-instruct"   # Groq multimodal (image input)
+  vision_model: "qwen/qwen3.6-27b"   # Groq multimodal (image + video-frame OCR). NOTE: llama-4-scout was decommissioned by Groq (404). Verify with GET /v1/models before changing.
   transcribe_model: "whisper-large-v3-turbo"                  # Groq audio → voice-over transcript
+  text_model: "llama-3.3-70b-versatile"                       # Groq text model → compliant post suggestions
   max_tokens: 1600
 
 # Monitoring target — every channel is narrowed to content about this organization.

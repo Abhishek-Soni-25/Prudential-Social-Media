@@ -82,7 +82,9 @@ def extract_text(images: list[str] | None, cfg: dict) -> dict[str, Any]:
     empty so the caller can mark the extraction status ``partial``.
     """
     comp_cfg = cfg.get("compliance", {})
-    model = comp_cfg.get("vision_model", "meta-llama/llama-4-scout-17b-16e-instruct")
+    # Env var wins so the model can be changed in production (e.g. Cloud Run) without a
+    # rebuild if Groq decommissions it. Falls back to config.yaml, then a safe default.
+    model = env("COMPLIANCE_VISION_MODEL") or comp_cfg.get("vision_model", "qwen/qwen3.6-27b")
     max_tokens = comp_cfg.get("max_tokens", 1600)
     images = [i for i in (images or []) if i][:5]  # vision models cap at ~5 images
 
@@ -108,31 +110,38 @@ def extract_text(images: list[str] | None, cfg: dict) -> dict[str, Any]:
         "visible>}}\n"
         "One imageText entry per distinct line of text. Do not interpret or judge."
     )
-    user_content: list[dict[str, Any]] = [{"type": "text", "text": instruction}]
-    for img in images:
-        user_content.append({"type": "image_url", "image_url": {"url": img}})
+    def _call(client: Any, imgs: list[str]) -> dict[str, Any]:
+        content: list[dict[str, Any]] = [{"type": "text", "text": instruction}]
+        for img in imgs:
+            content.append({"type": "image_url", "image_url": {"url": img}})
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": _OCR_SYSTEM}, {"role": "user", "content": content}],
+            temperature=0,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"},
+        )
+        return _parse_ocr(resp.choices[0].message.content or "", len(images))
 
     last_exc: Exception | None = None
     for key in keys:
-        try:
-            client = Groq(api_key=key)
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": _OCR_SYSTEM},
-                    {"role": "user", "content": user_content},
-                ],
-                temperature=0,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"},
-            )
-            return _parse_ocr(resp.choices[0].message.content or "", len(images))
-        except Exception as exc:  # try next key on rate-limit/quota
-            last_exc = exc
-            s = str(exc).lower()
-            if "429" in s or "rate" in s or "quota" in s or "per day" in s:
-                continue
-            raise
+        client = Groq(api_key=key)
+        # The Groq free tier caps tokens-per-minute, and each image costs tokens; if a
+        # multi-frame batch is too large (413), fall back to fewer frames rather than fail.
+        attempt = list(images)
+        while attempt:
+            try:
+                return _call(client, attempt)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                s = str(exc).lower()
+                too_large = "413" in s or "too large" in s or "tokens per minute" in s or "request_too_large" in s
+                if too_large and len(attempt) > 1:
+                    attempt = attempt[: max(1, len(attempt) // 2)]  # halve the frames and retry
+                    continue
+                if "429" in s or "rate" in s or "quota" in s or "per day" in s:
+                    break  # try the next key
+                raise
     raise RuntimeError(f"Vision OCR call failed: {last_exc}")
 
 
@@ -206,12 +215,17 @@ def build_extraction(
     ocr: dict[str, Any] = {"imageText": [], "signals": {}}
     ocr_attempted = bool(images)
     ocr_failed = False
+    ocr_error: str | None = None
     if images:
         try:
             ocr = extract_text(images, cfg)
         except Exception as exc:  # noqa: BLE001 — extraction must degrade, not crash
-            log.warning("extract_text failed during build_extraction: %s", exc)
+            # Surface the reason: a dead/misconfigured vision model must not look like a
+            # generic "partial". log.exception keeps the stack; the reason is also returned
+            # in metadata so the UI and audit log show WHY, not just that it failed.
+            log.exception("extract_text failed during build_extraction")
             ocr_failed = True
+            ocr_error = f"{type(exc).__name__}: {exc}"
 
     image_text = ocr.get("imageText", []) or []
     signals = ocr.get("signals", {}) or {}
@@ -238,6 +252,7 @@ def build_extraction(
 
         if ocr_failed:
             status = "partial"
+            metadata["extractionError"] = ocr_error  # visible reason, e.g. "vision model 404"
         elif ocr_attempted and not image_text:
             status = "partial"  # OCR came back empty
         elif low_conf:
@@ -418,3 +433,107 @@ def transcribe(file_bytes: bytes, filename: str, cfg: dict) -> str:
 
 def as_data_url(raw_bytes: bytes, mime: str = "image/jpeg") -> str:
     return f"data:{mime};base64,{base64.b64encode(raw_bytes).decode()}"
+
+
+def sample_video_frames(file_bytes: bytes, filename: str, cfg: dict, max_frames: int = 3) -> list[str]:
+    """Extract frames from an uploaded video with ffmpeg and return them as JPEG data
+    URLs, evenly spaced across the whole clip. This is server-side (no reliance on the
+    browser's canvas capture), so the frames are reliable and OCR can read text burned
+    into the video. Returns [] if ffmpeg is unavailable or the decode fails.
+    """
+    import glob
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+
+    if not shutil.which("ffmpeg"):
+        log.warning("ffmpeg not found — cannot extract video frames server-side")
+        return []
+
+    comp_cfg = cfg.get("compliance", {})
+    fps = comp_cfg.get("frame_fps", 1)          # sample 1 frame per second, then thin out
+    cap = comp_cfg.get("frame_scan_cap", 90)    # never decode more than this many
+    width = comp_cfg.get("frame_width", 640)    # downscale: image tokens scale with resolution,
+                                                # and the Groq free tier caps ~8000 tokens/minute
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, os.path.basename(filename or "video.mp4"))
+        with open(src, "wb") as fh:
+            fh.write(file_bytes)
+        pattern = os.path.join(td, "f_%04d.jpg")
+        cmd = [
+            "ffmpeg", "-y", "-i", src,
+            "-vf", f"fps={fps},scale='min({width},iw)':-2",
+            "-frames:v", str(cap), "-q:v", "5", pattern,
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=180)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ffmpeg frame extraction failed: %s", exc)
+            return []
+        files = sorted(glob.glob(os.path.join(td, "f_*.jpg")))
+        if not files:
+            return []
+        # Evenly sample up to max_frames across the whole video (extract_text caps at 5).
+        if len(files) > max_frames:
+            step = len(files) / max_frames
+            files = [files[min(len(files) - 1, int(i * step))] for i in range(max_frames)]
+        frames: list[str] = []
+        for fp in files:
+            try:
+                frames.append(as_data_url(open(fp, "rb").read(), "image/jpeg"))
+            except Exception:  # noqa: BLE001
+                continue
+        return frames
+
+
+def suggest_posts(draft: str, avoid: list[str], cfg: dict, n: int = 6) -> list[str]:
+    """Generate MAS-compliant social-media post suggestions with the Groq text model.
+
+    ``avoid`` is the list of restricted terms/rule titles pulled from the live rule
+    set, so custom don'ts added in Settings shape the suggestions too.
+    """
+    comp_cfg = cfg.get("compliance", {})
+    model = env("COMPLIANCE_TEXT_MODEL") or comp_cfg.get("text_model", "llama-3.3-70b-versatile")
+    keys = _keys()
+    if not keys:
+        raise RuntimeError("No Groq API key configured (GROQ_API_KEY).")
+    from groq import Groq
+
+    avoid_txt = "; ".join(a for a in avoid if a) or "guaranteed returns, specific return figures"
+    system = (
+        "You write compliant social-media post ideas for a regulated insurance brand in "
+        "Singapore under MAS Guideline FSG-03. Every suggestion MUST avoid: guaranteed, "
+        "assured, risk-free or capital-protected returns; any specific investment return, "
+        "yield or growth figure or percentage; client testimonials or chat screenshots; "
+        "urgency or scarcity pressure; the restricted term 'financial advisor'; and these "
+        "restricted items from policy: " + avoid_txt + ". Keep each suggestion under 240 "
+        "characters, factual, educational and brand-safe. Never make a promise about returns."
+    )
+    topic = draft.strip()
+    user = (
+        "Draft (may be empty): " + (topic or "(none)") + "\n\n"
+        "Return ONLY a JSON object of the form {\"suggestions\": [\"...\", ...]} with " + str(n) +
+        " distinct, compliant post suggestions" +
+        (" that refine or build on the draft's topic." if topic else " for general financial-wellness education.")
+    )
+    last_exc: Exception | None = None
+    for key in keys:
+        try:
+            resp = Groq(api_key=key).chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                temperature=0.7,
+                max_tokens=900,
+                response_format={"type": "json_object"},
+            )
+            data = _extract_json(resp.choices[0].message.content or "")
+            out = [str(s).strip() for s in (data.get("suggestions") or []) if str(s).strip()]
+            return out[:n]
+        except Exception as exc:  # try next key on rate-limit/quota
+            last_exc = exc
+            s = str(exc).lower()
+            if "429" in s or "rate" in s or "quota" in s or "per day" in s:
+                continue
+            raise
+    raise RuntimeError(f"Suggestion call failed: {last_exc}")

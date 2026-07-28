@@ -51,4 +51,17 @@ export const api = {
     const res = await fetch(`${BASE}/scan`, { method: "POST" });
     return res.json();
   },
+  complianceSuggest: async (draft: string, count = 6): Promise<{ suggestions: string[] }> => {
+    const res = await fetch(`${BASE}/compliance/suggest`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ draft, count }),
+    });
+    if (!res.ok) throw new Error(`${res.status}`);
+    return res.json();
+  },
+  complianceNotify: async (payload: { author: string; status: string; channel?: string; mentionId?: string }) => {
+    const res = await fetch(`${BASE}/compliance/notify`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    return res.json() as Promise<{ ok: boolean; message: string }>;
+  },
 };

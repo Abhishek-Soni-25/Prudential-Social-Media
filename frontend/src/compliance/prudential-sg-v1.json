@@ -531,6 +531,27 @@
       "reviewerNote": "Lead and contact routes must point to an official Prudential channel, per the introducer rules. Requires a maintained URL and handle allowlist.",
       "suggestedFix": "Point the lead or contact route to an official Prudential channel on the allowlist.",
       "enabled": false
+    },
+    {
+      "id": "D-13",
+      "type": "prohibition",
+      "title": "Restricted adviser terminology",
+      "description": "Content uses the restricted term 'financial advisor', which is not an acceptable descriptor",
+      "severity": "High",
+      "status": "active",
+      "dependency": null,
+      "detection": {
+        "modalities": ["content_text", "image_text", "video_frame_text", "transcript", "caption"],
+        "signal": "Lexicon match on the restricted term: financial advisor",
+        "template": "lexicon",
+        "params": {
+          "terms": ["financial advisor", "financial adviser"]
+        }
+      },
+      "basis": "Prudential advertising policy — restricted terminology",
+      "reviewerNote": "The term 'financial advisor' is not an acceptable descriptor under policy. Use the approved representative designation.",
+      "suggestedFix": "Replace 'financial advisor' with the approved title, e.g. 'Prudential financial representative' or 'consultant'.",
+      "enabled": true
     }
   ]
 }

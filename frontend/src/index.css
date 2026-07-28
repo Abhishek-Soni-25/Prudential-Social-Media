@@ -755,3 +755,50 @@ tbody tr:hover { background: #fcf4f5; }
   color: #a16207; background: #fffbeb; border-radius: 6px; padding: 2px 8px; }
 .mc-noteval-line { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
   font-size: 12px; color: var(--ink-faint); }
+
+/* ===== Media Compliance — content input ===== */
+.mc-content-input { width: 100%; min-height: 170px; border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px; font-size: 14px; font-family: inherit; line-height: 1.6; resize: vertical; color: var(--ink); }
+.mc-content-input:focus { outline: none; border-color: var(--pru-red); }
+.mc-content-preview { white-space: pre-wrap; font-size: 14px; line-height: 1.65; color: var(--ink); padding: 6px 4px; }
+
+/* ===== Media Compliance — Settings ===== */
+.mcs { display: flex; flex-direction: column; gap: 16px; }
+.mcs-add { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.mcs-add select, .mcs-add input { font-size: 13.5px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+.mcs-phrase { flex: 1; min-width: 260px; }
+.mcs-hint { font-size: 12px; color: var(--ink-faint); margin-top: 10px; line-height: 1.5; }
+.mcs-savebar { display: flex; gap: 10px; align-items: center; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.mcs-officer { font-size: 13px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 8px; }
+.mcs-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.mcs-list { display: flex; flex-direction: column; gap: 8px; max-height: 560px; overflow-y: auto; }
+.mcs-rule { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border: 1px solid var(--line);
+  border-radius: 9px; background: #fff; flex-wrap: wrap; }
+.mcs-rule.dont { border-left: 3px solid var(--high); }
+.mcs-rule.do { border-left: 3px solid var(--low); }
+.mcs-rule-title { font-size: 13px; font-weight: 600; color: var(--ink); flex: 1; min-width: 0; }
+.mcs-remove { margin-left: auto; border: none; background: var(--high-bg); color: var(--high); width: 22px; height: 22px;
+  border-radius: 6px; cursor: pointer; font-weight: 800; font-size: 12px; }
+@media (max-width: 900px) { .mcs-cols { grid-template-columns: 1fr; } }
+
+/* ===== Compliance status chip in analysed-content table ===== */
+.mc-status-chip { border: none; cursor: pointer; font-size: 11px; font-weight: 800; letter-spacing: .02em;
+  padding: 4px 11px; border-radius: 999px; white-space: nowrap; transition: filter .12s; }
+.mc-status-chip:hover { filter: brightness(0.95); }
+.mc-status-chip.compliant { background: #e7f7ee; color: var(--ok); }
+.mc-status-chip.noncompliant { background: var(--high-bg); color: var(--high); }
+.mc-toast { position: fixed; right: 24px; bottom: 24px; z-index: 50; background: var(--ink); color: #fff;
+  padding: 12px 18px; border-radius: 12px; font-size: 13px; font-weight: 600; box-shadow: var(--shadow); max-width: 380px; }
+
+/* ===== Compliant post suggestions (Create Post) ===== */
+.sugg { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: #fafbfc; }
+.sugg-head { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft);
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.sugg-load { font-size: 10.5px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--ink-faint); }
+.sugg-empty { font-size: 12.5px; color: var(--ink-faint); }
+.sugg-list { display: flex; flex-direction: column; gap: 8px; }
+.sugg-item { text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 9px; padding: 10px 12px;
+  font-size: 13px; line-height: 1.5; color: var(--ink); cursor: pointer; transition: all .12s; }
+.sugg-item:hover { border-color: var(--pru-red); background: var(--pru-red-soft); }
+.sugg-more { margin-top: 10px; border: none; background: transparent; color: var(--pru-red); font-weight: 700;
+  font-size: 12.5px; cursor: pointer; padding: 4px 0; }

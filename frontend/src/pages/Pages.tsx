@@ -430,6 +430,7 @@ function CreatePost() {
           </select>
         </div>
         <textarea className="compose-text" rows={6} placeholder="Write your post…" value={text} onChange={(e) => setText(e.target.value)} />
+        <SuggestionBox draft={text} onPick={setText} />
         <div className="compose-actions">
           <label className="btn-ghost">📎 Attach document
             <input type="file" style={{ display: "none" }} onChange={(e) => setFile(e.target.files?.[0]?.name ?? null)} />
@@ -442,6 +443,52 @@ function CreatePost() {
         {status && <div className="assist-status" style={{ marginTop: 10 }}>{status}</div>}
       </div>
     </Panel>
+  );
+}
+
+function SuggestionBox({ draft, onPick }: { draft: string; onPick: (t: string) => void }) {
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
+  // Debounced: refreshes ~1.2s after the user stops typing (so it stays dynamic
+  // without a Groq call per keystroke). Also fetches general ideas when empty.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const r = await api.complianceSuggest(draft, 8);
+        if (!cancelled) { setSuggestions(r.suggestions ?? []); setShowAll(false); }
+      } catch {
+        if (!cancelled) setSuggestions([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, draft.trim() ? 1200 : 400);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [draft]);
+
+  const shown = showAll ? suggestions : suggestions.slice(0, 3);
+  return (
+    <div className="sugg">
+      <div className="sugg-head">💡 Compliant suggestions {loading && <span className="sugg-load">updating…</span>}</div>
+      {suggestions.length === 0 && !loading && (
+        <div className="sugg-empty">Start typing — MAS-compliant post ideas will appear here.</div>
+      )}
+      <div className="sugg-list">
+        {shown.map((s, i) => (
+          <button key={i} className="sugg-item" onClick={() => onPick(s)} title="Use this suggestion — you can still edit it">
+            {s}
+          </button>
+        ))}
+      </div>
+      {suggestions.length > 3 && (
+        <button className="sugg-more" onClick={() => setShowAll((v) => !v)}>
+          {showAll ? "Show fewer" : `View more suggestions (${suggestions.length - 3})`}
+        </button>
+      )}
+    </div>
   );
 }
 

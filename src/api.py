@@ -481,17 +481,24 @@ async def compliance_extract_video(
     except json.JSONDecodeError:
         meta = {}
     meta.setdefault("isVideo", True)
+    # Server-side frame sampling drives OCR, so an incomplete browser-side capture no
+    # longer forces a partial. Drop the client's expected-frame hint accordingly.
+    meta.pop("expectedFrames", None)
     try:
         data = await file.read()
         transcript = compliance_mod.transcribe(data, file.filename or "video.mp4", _cfg)
+        # Extract frames from the video on the server (ffmpeg) and OCR those; fall back
+        # to any frames the browser captured only if server extraction yielded nothing.
+        server_frames = compliance_mod.sample_video_frames(data, file.filename or "video.mp4", _cfg)
+        frames = server_frames or frame_list
         return compliance_mod.build_extraction(
             assetId=meta.get("assetId"),
             adviserId=adviserId,
             channel=channel,
-            images=frame_list,
+            images=frames,
             transcript=transcript,
             captionText=captionText,
-            frames=frame_list,
+            frames=frames,
             metadata=meta,
             cfg=_cfg,
         )
@@ -565,6 +572,73 @@ def compliance_put_ruleset(body: dict[str, Any]) -> dict[str, Any]:
         "actor": actor,
     })
     return ruleset
+
+
+def _active_ruleset_dict() -> dict[str, Any]:
+    path = _RULESET_ACTIVE if _RULESET_ACTIVE.exists() else _RULESET_DEFAULT
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:  # noqa: BLE001
+        return {"rules": []}
+
+
+def _avoid_terms(rs: dict[str, Any]) -> list[str]:
+    """Restricted terms/titles from the live prohibition rules — feeds the suggester
+    so custom don'ts added in Settings also shape the suggestions."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for r in rs.get("rules", []):
+        if r.get("type") == "prohibition" and r.get("status") in ("active", "advisory"):
+            cand = [r.get("title") or r.get("id")]
+            cand += ((r.get("detection") or {}).get("params") or {}).get("terms") or []
+            for t in cand:
+                if t and t not in seen:
+                    seen.add(t)
+                    out.append(t)
+    return out
+
+
+@app.post("/api/compliance/suggest")
+def compliance_suggest(body: dict[str, Any]) -> dict[str, Any]:
+    """Generate MAS-compliant social-media post suggestions from a draft."""
+    draft = (body.get("draft") or "").strip()
+    try:
+        count = max(1, min(12, int(body.get("count") or 6)))
+    except (TypeError, ValueError):
+        count = 6
+    try:
+        avoid = _avoid_terms(_active_ruleset_dict())
+        return {"suggestions": compliance_mod.suggest_posts(draft, avoid, _cfg, n=count)}
+    except Exception as exc:  # noqa: BLE001
+        log.exception("compliance suggest failed")
+        raise HTTPException(status_code=500, detail=f"Suggestions failed: {exc}")
+
+
+@app.post("/api/compliance/notify")
+def compliance_notify(body: dict[str, Any]) -> dict[str, Any]:
+    """Record a compliance notification to the post's author (append-only) and return
+    a confirmation message for the UI toast."""
+    author = (body.get("author") or "the author").strip() or "the author"
+    status = (body.get("status") or "reviewed").strip() or "reviewed"
+    channel = (body.get("channel") or "post").strip() or "post"
+    rec = {
+        "author": author,
+        "status": status,
+        "channel": channel,
+        "mentionId": body.get("mentionId"),
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
+    _compliance_dir()
+    try:
+        with (_COMPLIANCE_DIR / "notifications.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001
+        log.warning("could not persist compliance notification")
+    label = status.replace("_", "-")
+    verb = "flagged as" if "non" in status.lower() else "confirmed"
+    msg = f"Notification sent to {author}: their {channel} post was {verb} {label}."
+    return {"ok": True, "message": msg, "notification": rec}
 
 
 @app.post("/api/compliance/audit")

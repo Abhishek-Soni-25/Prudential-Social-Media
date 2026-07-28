@@ -14,6 +14,7 @@ import {
 } from "./pages/Pages";
 import { MarketingReport, ListeningReport, CompetitionReport } from "./pages/ReportPages";
 import { MediaCompliance } from "./pages/MediaCompliance";
+import { MediaComplianceSettings } from "./pages/MediaComplianceSettings";
 
 const REAL_CHANNELS = ["reddit", "youtube", "instagram", "telegram", "quora", "linkedin"];
 
@@ -32,6 +33,7 @@ const META: Record<Page, { title: string; sub: string }> = {
   bulk: { title: "Bulk Actions", sub: "Select and action many mentions at once, ranked by priority." },
   campaign: { title: "Keyword Campaigns", sub: "Add your own keywords and review the channels driving collection." },
   compliance: { title: "Media Compliance", sub: "Screen adviser and marketer creatives against MAS FSG-03 and Prudential advertising policy." },
+  mc_settings: { title: "Media Compliance — Settings", sub: "Manage the Do's and Don'ts. Add your own — they apply to every content, image and video screening." },
 };
 
 export default function App() {
@@ -108,6 +110,7 @@ export default function App() {
           {page === "bulk" && <BulkActions cases={cases} />}
           {page === "campaign" && <Campaign mentions={mentions} />}
           {page === "compliance" && <MediaCompliance />}
+          {page === "mc_settings" && <MediaComplianceSettings />}
 
           <div className="footnote">
             Monitors public &amp; legally authorized channels only · PII pseudonymized · PDPA / GDPR.

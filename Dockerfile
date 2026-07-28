@@ -18,6 +18,10 @@ ENV PYTHONUNBUFFERED=1 \
     PORT=8080
 WORKDIR /app
 
+# ffmpeg: needed to sample video frames server-side for Media Compliance OCR.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
