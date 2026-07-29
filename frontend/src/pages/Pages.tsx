@@ -432,7 +432,7 @@ function CreatePost() {
         <textarea className="compose-text" rows={6} placeholder="Write your post…" value={text} onChange={(e) => setText(e.target.value)} />
         <SuggestionBox draft={text} onPick={setText} />
         <div className="compose-actions">
-          <label className="btn-ghost">📎 Attach document
+          <label className="btn-ghost">📎 Upload
             <input type="file" style={{ display: "none" }} onChange={(e) => setFile(e.target.files?.[0]?.name ?? null)} />
           </label>
           {file && <span className="muted">{file}</span>}
@@ -451,9 +451,14 @@ function SuggestionBox({ draft, onPick }: { draft: string; onPick: (t: string) =
   const [loading, setLoading] = useState(false);
   const [showAll, setShowAll] = useState(false);
 
-  // Debounced: refreshes ~1.2s after the user stops typing (so it stays dynamic
-  // without a Groq call per keystroke). Also fetches general ideas when empty.
+  // Only suggest once the user has written something, and tailor it to that draft.
+  // Debounced ~1.2s so it refreshes after they stop typing, not on every keystroke.
   useEffect(() => {
+    if (!draft.trim()) {
+      setSuggestions([]);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     const timer = window.setTimeout(async () => {
@@ -465,16 +470,16 @@ function SuggestionBox({ draft, onPick }: { draft: string; onPick: (t: string) =
       } finally {
         if (!cancelled) setLoading(false);
       }
-    }, draft.trim() ? 1200 : 400);
+    }, 1200);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [draft]);
 
   const shown = showAll ? suggestions : suggestions.slice(0, 3);
   return (
     <div className="sugg">
-      <div className="sugg-head">💡 Compliant suggestions {loading && <span className="sugg-load">updating…</span>}</div>
+      <div className="sugg-head">💡 Post Suggestions {loading && <span className="sugg-load">writing…</span>}</div>
       {suggestions.length === 0 && !loading && (
-        <div className="sugg-empty">Start typing — MAS-compliant post ideas will appear here.</div>
+        <div className="sugg-empty">Start writing your post — tailored, MAS-compliant suggestions will appear here.</div>
       )}
       <div className="sugg-list">
         {shown.map((s, i) => (

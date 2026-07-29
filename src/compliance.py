@@ -502,20 +502,23 @@ def suggest_posts(draft: str, avoid: list[str], cfg: dict, n: int = 6) -> list[s
 
     avoid_txt = "; ".join(a for a in avoid if a) or "guaranteed returns, specific return figures"
     system = (
-        "You write compliant social-media post ideas for a regulated insurance brand in "
-        "Singapore under MAS Guideline FSG-03. Every suggestion MUST avoid: guaranteed, "
-        "assured, risk-free or capital-protected returns; any specific investment return, "
-        "yield or growth figure or percentage; client testimonials or chat screenshots; "
-        "urgency or scarcity pressure; the restricted term 'financial advisor'; and these "
-        "restricted items from policy: " + avoid_txt + ". Keep each suggestion under 240 "
-        "characters, factual, educational and brand-safe. Never make a promise about returns."
+        "You write ready-to-publish, professional social-media posts for a regulated insurance "
+        "brand in Singapore under MAS Guideline FSG-03. Write each suggestion as a COMPLETE post: "
+        "an attention-grabbing opening line, one or two sentences of genuine, specific value or "
+        "insight, and a soft, non-pushy call to action. Aim for roughly 300-600 characters across "
+        "2-4 short lines; use tasteful line breaks, at most one or two emojis, and 1-3 relevant "
+        "hashtags. Keep it warm, factual and educational. Every post MUST avoid: guaranteed, "
+        "assured, risk-free or capital-protected returns; any specific investment return, yield or "
+        "growth figure or percentage; client testimonials or chat screenshots; urgency or scarcity "
+        "pressure; the restricted term 'financial advisor'; and these restricted items from policy: "
+        + avoid_txt + ". Never promise or imply returns."
     )
     topic = draft.strip()
     user = (
-        "Draft (may be empty): " + (topic or "(none)") + "\n\n"
+        "The user is drafting a post about:\n\"" + (topic or "financial wellness") + "\"\n\n"
         "Return ONLY a JSON object of the form {\"suggestions\": [\"...\", ...]} with " + str(n) +
-        " distinct, compliant post suggestions" +
-        (" that refine or build on the draft's topic." if topic else " for general financial-wellness education.")
+        " distinct, ready-to-publish posts that build on and expand this topic. Each array item is "
+        "one full, publishable post (with line breaks and hashtags), not a one-line phrase."
     )
     last_exc: Exception | None = None
     for key in keys:
@@ -523,12 +526,17 @@ def suggest_posts(draft: str, avoid: list[str], cfg: dict, n: int = 6) -> list[s
             resp = Groq(api_key=key).chat.completions.create(
                 model=model,
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-                temperature=0.7,
-                max_tokens=900,
+                temperature=0.75,
+                max_tokens=1800,
                 response_format={"type": "json_object"},
             )
             data = _extract_json(resp.choices[0].message.content or "")
-            out = [str(s).strip() for s in (data.get("suggestions") or []) if str(s).strip()]
+
+            def _clean(s: Any) -> str:
+                # Drop the model's stray indentation on wrapped lines; keep real line breaks.
+                return "\n".join(line.strip() for line in str(s).splitlines()).strip()
+
+            out = [c for c in (_clean(s) for s in (data.get("suggestions") or [])) if c]
             return out[:n]
         except Exception as exc:  # try next key on rate-limit/quota
             last_exc = exc
