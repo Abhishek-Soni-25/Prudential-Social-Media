@@ -17,3 +17,5 @@ vaderSentiment>=3.3.2     # local sentiment pre-pass for the CLI pipeline (degra
 google-genai>=1.0.0
 python-multipart>=0.0.9      # FastAPI multipart uploads (media compliance video)
 youtube-transcript-api>=0.6.2 # YouTube caption transcript for media compliance video links
+Pillow>=10.0.0               # normalise ANY uploaded image (HEIC needs pillow-heif) to a JPEG the vision model accepts
+pillow-heif>=0.16.0          # optional: decode iPhone HEIC/AVIF stills (needs libheif at the OS level)

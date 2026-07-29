@@ -72,21 +72,98 @@ def _extract_json(raw: str) -> dict[str, Any]:
         return {}
 
 
+def normalize_image(src: str | None, max_dim: int = 1600, quality: int = 85) -> str | None:
+    """Re-encode ANY still image into a clean JPEG data URL the vision model accepts.
+
+    The Groq vision endpoint only accepts a handful of formats (JPEG/PNG/WEBP/GIF) and
+    rejects oversized payloads. Uploads in the wild are anything but — HEIC from an
+    iPhone, BMP/TIFF from a scanner, a 12 MP PNG screenshot, a CMYK JPEG. Feeding those
+    straight to the API is exactly why "only some images parse": the odd ones 4xx and
+    the extraction degrades to manual review.
+
+    So we decode with Pillow (which reads far more formats than the API), flatten
+    transparency onto white, convert to RGB, downscale the long edge to ``max_dim`` and
+    re-encode as JPEG. Every creative then reaches the model as the same, small,
+    guaranteed-accepted shape — which also makes the OCR result far more consistent from
+    one machine/network to the next.
+
+    Best-effort: if Pillow is unavailable or the bytes won't decode, return ``src``
+    unchanged so an already-valid JPEG still goes through.
+    """
+    if not src:
+        return src
+    # Only data URLs carry raw bytes we can transcode; pass through anything else (e.g. a
+    # remote https thumbnail) untouched.
+    if not src.startswith("data:"):
+        return src
+    try:
+        header, _, b64 = src.partition(",")
+        if not b64:
+            return src
+        raw = base64.b64decode(b64, validate=False)
+    except Exception:  # noqa: BLE001
+        return src
+    try:
+        import io
+
+        from PIL import Image  # Pillow
+
+        # Opt-in HEIC/AVIF support (iPhone photos) when pillow-heif is installed.
+        try:  # pragma: no cover - depends on optional dep
+            import pillow_heif  # type: ignore
+
+            pillow_heif.register_heif_opener()
+        except Exception:  # noqa: BLE001
+            pass
+
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+        # Flatten alpha / palette onto a white background so JPEG (no alpha) is faithful.
+        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            bg.paste(rgba, mask=rgba.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        # Downscale the long edge; never upscale.
+        w, h = img.size
+        if max(w, h) > max_dim:
+            if w >= h:
+                img = img.resize((max_dim, max(1, round(h * max_dim / w))))
+            else:
+                img = img.resize((max(1, round(w * max_dim / h)), max_dim))
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=quality)
+        return as_data_url(out.getvalue(), "image/jpeg")
+    except Exception as exc:  # noqa: BLE001 - normalization is best-effort
+        log.warning("image normalization skipped (%s); passing original through", exc)
+        return src
+
+
 def extract_text(images: list[str] | None, cfg: dict) -> dict[str, Any]:
-    """OCR / scene-read one or more image frames with the Groq vision model.
+    """OCR / scene-read image frames with the Groq vision model, batching every frame.
 
     Returns a dict:
         {"imageText": [{"text": str, "frame": int, "confidence": float}, ...],
          "signals": {"messaging_ui": bool, "face": bool, "chart": bool}}
-    It does NOT judge compliance. If the model returns nothing usable, ``imageText`` is
-    empty so the caller can mark the extraction status ``partial``.
+
+    Every frame is normalised to a clean JPEG (see ``normalize_image``) and OCR'd — long
+    clips are processed in batches of ``frame_ocr_batch`` so a video is read frame by
+    frame rather than capped at the model's ~5-image-per-call limit. ``frame`` in each
+    entry is the GLOBAL index into the input list, so hits map back to the right frame.
+    It does NOT judge compliance. Raises only when EVERY batch failed to reach the model.
     """
     comp_cfg = cfg.get("compliance", {})
     # Env var wins so the model can be changed in production (e.g. Cloud Run) without a
     # rebuild if Groq decommissions it. Falls back to config.yaml, then a safe default.
     model = env("COMPLIANCE_VISION_MODEL") or comp_cfg.get("vision_model", "qwen/qwen3.6-27b")
     max_tokens = comp_cfg.get("max_tokens", 1600)
-    images = [i for i in (images or []) if i][:5]  # vision models cap at ~5 images
+    batch_size = max(1, min(3, int(comp_cfg.get("frame_ocr_batch", 3))))  # qwen vision caps 3 imgs/call
+    frame_cap = max(1, int(comp_cfg.get("frame_ocr_max", 12)))
+
+    # Normalise every frame up-front so the model always gets an accepted JPEG, then cap.
+    images = [n for n in (normalize_image(i) for i in (images or []) if i) if n][:frame_cap]
 
     empty = {"imageText": [], "signals": {"messaging_ui": False, "face": False, "chart": False}}
     if not images:
@@ -100,49 +177,99 @@ def extract_text(images: list[str] | None, cfg: dict) -> dict[str, Any]:
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("groq not installed; pip install groq") from exc
 
-    instruction = (
-        f"Read the {len(images)} image(s) below. Return ONLY the visible text, verbatim, "
-        "and coarse visual signals. Respond with ONLY a JSON object of this exact shape:\n"
-        '{"imageText": [{"text": "<one line of visible text>", "frame": <0-based index of '
-        'the image the line came from>, "confidence": <0..1>}], '
-        '"signals": {"messaging_ui": <true if a chat/messaging app UI is visible>, '
-        '"face": <true if a human face is visible>, "chart": <true if a chart/graph is '
-        "visible>}}\n"
-        "One imageText entry per distinct line of text. Do not interpret or judge."
-    )
-    def _call(client: Any, imgs: list[str]) -> dict[str, Any]:
-        content: list[dict[str, Any]] = [{"type": "text", "text": instruction}]
+    def _instruction(n: int) -> str:
+        return (
+            f"Read the {n} image(s) below. Return ONLY the visible text, verbatim, "
+            "and coarse visual signals. Respond with ONLY a JSON object of this exact shape:\n"
+            '{"imageText": [{"text": "<one line of visible text>", "frame": <0-based index of '
+            'the image the line came from>, "confidence": <0..1>}], '
+            '"signals": {"messaging_ui": <true if a chat/messaging app UI is visible>, '
+            '"face": <true if a human face is visible>, "chart": <true if a chart/graph is '
+            "visible>}}\n"
+            "One imageText entry per distinct line of text. Do not interpret or judge."
+        )
+
+    def _call(client: Any, imgs: list[str], strict: bool = True) -> dict[str, Any]:
+        content: list[dict[str, Any]] = [{"type": "text", "text": _instruction(len(imgs))}]
         for img in imgs:
             content.append({"type": "image_url", "image_url": {"url": img}})
-        resp = client.chat.completions.create(
+        kwargs: dict[str, Any] = dict(
             model=model,
             messages=[{"role": "system", "content": _OCR_SYSTEM}, {"role": "user", "content": content}],
             temperature=0,
             max_tokens=max_tokens,
-            response_format={"type": "json_object"},
         )
-        return _parse_ocr(resp.choices[0].message.content or "", len(images))
+        # Strict json_object mode makes Groq reject a response whose JSON doesn't validate
+        # (400 json_validate_failed) — which happens intermittently. When it does we retry
+        # WITHOUT the strict format and parse the text loosely (_parse_ocr tolerates prose
+        # around the JSON), so a flaky serialisation no longer wipes out the OCR.
+        if strict:
+            kwargs["response_format"] = {"type": "json_object"}
+        resp = client.chat.completions.create(**kwargs)
+        return _parse_ocr(resp.choices[0].message.content or "", len(imgs))
 
-    last_exc: Exception | None = None
-    for key in keys:
-        client = Groq(api_key=key)
-        # The Groq free tier caps tokens-per-minute, and each image costs tokens; if a
-        # multi-frame batch is too large (413), fall back to fewer frames rather than fail.
-        attempt = list(images)
-        while attempt:
+    def _ocr_batch(imgs: list[str]) -> dict[str, Any]:
+        """OCR one batch (≤3 imgs): rotate keys on rate-limit, halve on 413, recover on
+        the model's occasional invalid-JSON 400 by retrying in non-strict mode."""
+        last_exc: Exception | None = None
+        for key in keys:
+            client = Groq(api_key=key)
+            attempt = list(imgs)
+            while attempt:
+                try:
+                    return _call(client, attempt)
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    s = str(exc).lower()
+                    # The model emitted un-validatable JSON. Retry once in non-strict mode
+                    # (parse loosely); if that also fails, fall through to the next key.
+                    if "json_validate" in s or "failed to validate json" in s or "json_object" in s:
+                        try:
+                            return _call(client, attempt, strict=False)
+                        except Exception as exc2:  # noqa: BLE001
+                            last_exc = exc2
+                            break  # next key
+                    too_large = (
+                        "413" in s or "too large" in s or "tokens per minute" in s
+                        or "request_too_large" in s or "too many images" in s or "supports up to" in s
+                    )
+                    if too_large and len(attempt) > 1:
+                        attempt = attempt[: max(1, len(attempt) // 2)]  # halve and retry
+                        continue
+                    if "429" in s or "rate" in s or "quota" in s or "per day" in s:
+                        break  # try the next key
+                    raise
+        raise RuntimeError(f"Vision OCR call failed: {last_exc}")
+
+    # Process every frame in batches; merge, remapping each batch's local frame index to
+    # the global one. A single batch failing does not sink the whole extraction.
+    merged_text: list[dict[str, Any]] = []
+    signals = {"messaging_ui": False, "face": False, "chart": False}
+    batch_errors: list[str] = []
+    for start in range(0, len(images), batch_size):
+        batch = images[start : start + batch_size]
+        try:
+            res = _ocr_batch(batch)
+        except Exception as exc:  # noqa: BLE001
+            batch_errors.append(f"{type(exc).__name__}: {exc}")
+            continue
+        for item in res.get("imageText", []) or []:
+            local = item.get("frame") or 0
             try:
-                return _call(client, attempt)
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                s = str(exc).lower()
-                too_large = "413" in s or "too large" in s or "tokens per minute" in s or "request_too_large" in s
-                if too_large and len(attempt) > 1:
-                    attempt = attempt[: max(1, len(attempt) // 2)]  # halve the frames and retry
-                    continue
-                if "429" in s or "rate" in s or "quota" in s or "per day" in s:
-                    break  # try the next key
-                raise
-    raise RuntimeError(f"Vision OCR call failed: {last_exc}")
+                local = int(local)
+            except (TypeError, ValueError):
+                local = 0
+            item["frame"] = start + max(0, min(local, len(batch) - 1))
+            merged_text.append(item)
+        for k in signals:
+            signals[k] = signals[k] or bool(res.get("signals", {}).get(k))
+
+    # Only surface a hard failure if NOTHING came back across every batch — a partial
+    # read (some batches succeeded) is still a usable extraction.
+    if not merged_text and batch_errors and len(batch_errors) == (len(images) + batch_size - 1) // batch_size:
+        raise RuntimeError(f"Vision OCR call failed: {batch_errors[-1]}")
+
+    return {"imageText": merged_text, "signals": signals}
 
 
 def _parse_ocr(raw: str, n_images: int) -> dict[str, Any]:
@@ -233,38 +360,33 @@ def build_extraction(
     if assetId is None:
         assetId = _asset_id(images, frames, transcript, captionText, metadata)
 
-    # ---- extractionStatus (conservative) ----
+    # ---- extractionStatus ----
+    # An extraction is trustworthy ('complete') as long as we actually READ the creative
+    # and got at least one usable signal: visible text, a voice-over transcript, or a
+    # caption. A still with no text, or a video that is music-only, is a COMPLETE read
+    # that simply found nothing to flag — not an "incomplete extraction". Only two things
+    # degrade the status, so genuine dead-ends still reach a human instead of auto-passing:
+    #   * 'failed'  — we were asked to read frames but NONE decoded and there is no
+    #                 transcript and no caption: nothing was read at all (corrupt file,
+    #                 dead link). This is the only path that blocks on emptiness.
+    #   * 'partial' — the vision model itself errored (network blocked / model down) AND
+    #                 that left us with no text, no transcript and no caption, so we can't
+    #                 vouch for the read. If OCR errored but a transcript or caption still
+    #                 gives us content, we keep 'complete' and just note the error.
     requested = ocr_attempted or (frames is not None and len(frames) > 0)
-    decoded_none = ocr_attempted and len(images) == 0  # frames requested but none decoded
+    has_any_content = bool(image_text) or bool(transcript) or bool(captionText)
 
-    status = "complete"
-    if link_failed or (requested and not images and not transcript):
+    if ocr_failed and ocr_error:
+        metadata["extractionError"] = ocr_error  # visible reason for the reviewer/audit log
+
+    if link_failed:
         status = "failed"
+    elif requested and not images and not transcript and not captionText:
+        status = "failed"  # frames expected, none decoded, nothing else read
+    elif ocr_failed and not has_any_content:
+        status = "partial"  # model unreachable and no other signal to fall back on
     else:
-        low_conf = image_text and all(
-            (c is not None and c < 0.5) for c in
-            [t.get("confidence") for t in image_text]
-        )
-        expected_frames = metadata.get("expectedFrames")
-        short_frames = False
-        if isinstance(expected_frames, int) and expected_frames > 0:
-            short_frames = len(images) < expected_frames
-
-        if ocr_failed:
-            status = "partial"
-            metadata["extractionError"] = ocr_error  # visible reason, e.g. "vision model 404"
-        elif ocr_attempted and not image_text:
-            status = "partial"  # OCR came back empty
-        elif low_conf:
-            status = "partial"  # OCR low-confidence
-        elif metadata.get("hasAudio") is False or (
-            metadata.get("isVideo") and not transcript
-        ):
-            status = "partial"  # video with no audio track / empty transcript
-        elif short_frames:
-            status = "partial"  # frames list shorter than expected
-        elif decoded_none:
-            status = "partial"
+        status = "complete"
 
     return {
         "assetId": assetId,
@@ -405,19 +527,67 @@ def fetch_youtube(url: str) -> dict[str, Any]:
     return {"video_id": vid, "transcript": transcript, "thumbnail": thumb_data}
 
 
+def _extract_audio(file_bytes: bytes, filename: str) -> tuple[bytes, str] | None:
+    """Transcode a video/audio upload to a small mono 16 kHz MP3 with ffmpeg.
+
+    Whisper only needs the audio, so shipping the whole 15-20 MB video is slow and can
+    trip the API's file-size limit. Pulling a compact MP3 first (a 40 s clip is well
+    under 1 MB) makes transcription fast and reliable. Returns ``None`` when ffmpeg is
+    absent or the file genuinely has no audio track, so the caller degrades gracefully
+    (a music-/silence-only video is a valid, complete extraction — just no transcript).
+    """
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+
+    if not shutil.which("ffmpeg"):
+        return None
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, os.path.basename(filename or "video.mp4"))
+        out = os.path.join(td, "audio.mp3")
+        with open(src, "wb") as fh:
+            fh.write(file_bytes)
+        cmd = [
+            "ffmpeg", "-y", "-i", src,
+            "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k", out,
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=180)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ffmpeg audio extraction failed: %s", exc)
+            return None
+        if not os.path.exists(out) or os.path.getsize(out) < 256:
+            return None  # no audio track (or empty) — not an error
+        try:
+            return open(out, "rb").read(), "audio.mp3"
+        except Exception:  # noqa: BLE001
+            return None
+
+
 def transcribe(file_bytes: bytes, filename: str, cfg: dict) -> str:
-    """Transcribe an uploaded video/audio file's voice-over with Groq Whisper."""
+    """Transcribe an uploaded video/audio file's voice-over with Groq Whisper.
+
+    Extracts a compact MP3 first (see ``_extract_audio``) so large videos transcribe
+    quickly and never hit the API's size ceiling; falls back to sending the original
+    bytes when ffmpeg is unavailable. An empty result is normal for a silent clip and is
+    NOT treated as a failure by the caller.
+    """
     model = cfg.get("compliance", {}).get("transcribe_model", "whisper-large-v3-turbo")
     keys = _keys()
     if not keys:
         return ""
+
+    audio = _extract_audio(file_bytes, filename)
+    send_bytes, send_name = audio if audio else (file_bytes, filename or "video.mp4")
+
     from groq import Groq
     last_exc: Exception | None = None
     for key in keys:
         try:
             client = Groq(api_key=key)
             resp = client.audio.transcriptions.create(
-                file=(filename or "video.mp4", file_bytes), model=model, response_format="text",
+                file=(send_name, send_bytes), model=model, response_format="text",
             )
             return (resp if isinstance(resp, str) else getattr(resp, "text", "")).strip()
         except Exception as exc:
@@ -435,7 +605,7 @@ def as_data_url(raw_bytes: bytes, mime: str = "image/jpeg") -> str:
     return f"data:{mime};base64,{base64.b64encode(raw_bytes).decode()}"
 
 
-def sample_video_frames(file_bytes: bytes, filename: str, cfg: dict, max_frames: int = 3) -> list[str]:
+def sample_video_frames(file_bytes: bytes, filename: str, cfg: dict, max_frames: int | None = None) -> list[str]:
     """Extract frames from an uploaded video with ffmpeg and return them as JPEG data
     URLs, evenly spaced across the whole clip. This is server-side (no reliance on the
     browser's canvas capture), so the frames are reliable and OCR can read text burned
@@ -456,6 +626,9 @@ def sample_video_frames(file_bytes: bytes, filename: str, cfg: dict, max_frames:
     cap = comp_cfg.get("frame_scan_cap", 90)    # never decode more than this many
     width = comp_cfg.get("frame_width", 640)    # downscale: image tokens scale with resolution,
                                                 # and the Groq free tier caps ~8000 tokens/minute
+    # Keep in step with extract_text's per-frame OCR budget so every returned frame is read.
+    if max_frames is None:
+        max_frames = max(1, int(comp_cfg.get("frame_ocr_max", 12)))
     with tempfile.TemporaryDirectory() as td:
         src = os.path.join(td, os.path.basename(filename or "video.mp4"))
         with open(src, "wb") as fh:

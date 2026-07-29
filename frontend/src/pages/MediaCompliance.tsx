@@ -158,7 +158,7 @@ export function MediaCompliance() {
             >
               <div className="mc-drop-icon">{mode === "video" ? "🎬" : "🖼"}</div>
               <div className="mc-drop-main">Drop your {mode} here or click to browse</div>
-              <div className="mc-drop-sub">{mode === "image" ? "Supported: PNG, JPG, WEBP" : "Supported: MP4, WEBM, MOV"}</div>
+              <div className="mc-drop-sub">{mode === "image" ? "Any image — PNG, JPG, WEBP, GIF, BMP, TIFF, HEIC" : "Any video — MP4, WEBM, MOV, MKV, AVI"}</div>
               {file && (
                 <div className="mc-drop-file" title={file.name}>
                   ✓ {file.name}

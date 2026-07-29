@@ -24,6 +24,13 @@ compliance:
   transcribe_model: "whisper-large-v3-turbo"                  # Groq audio → voice-over transcript
   text_model: "llama-3.3-70b-versatile"                       # Groq text model → compliant post suggestions
   max_tokens: 1600
+  # Video frame-by-frame OCR: sample up to frame_ocr_max frames across the clip and OCR
+  # them in batches of frame_ocr_batch (the vision model accepts ~5 images per call).
+  frame_ocr_max: 12
+  frame_ocr_batch: 3   # qwen vision accepts at most 3 images per call
+  frame_fps: 1        # frames sampled per second before thinning to frame_ocr_max
+  frame_scan_cap: 90  # never decode more than this many frames from a clip
+  frame_width: 640    # downscale width for OCR frames (image tokens scale with resolution)
 
 # Monitoring target — every channel is narrowed to content about this organization.
 target:

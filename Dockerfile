@@ -18,8 +18,9 @@ ENV PYTHONUNBUFFERED=1 \
     PORT=8080
 WORKDIR /app
 
-# ffmpeg: needed to sample video frames server-side for Media Compliance OCR.
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+# ffmpeg: sample video frames + extract audio server-side for Media Compliance OCR.
+# libheif: lets Pillow/pillow-heif decode iPhone HEIC/AVIF stills so every image parses.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libheif1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
