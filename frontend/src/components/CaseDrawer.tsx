@@ -176,8 +176,16 @@ export function CaseDrawer({ c, onClose }: { c: CaseFile; onClose: () => void })
           </div>
 
           <div className="field">
-            <div className="lbl">Detected at</div>
-            <div className="val">{fmtTime(c.created_at)}</div>
+            <div className="kv">
+              <div>
+                <div className="lbl">Date posted</div>
+                <div className="val">{fmtTime(c.timestamp)}</div>
+              </div>
+              <div>
+                <div className="lbl">Detected at</div>
+                <div className="val">{fmtTime(c.created_at)}</div>
+              </div>
+            </div>
           </div>
         </div>
 
