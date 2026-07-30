@@ -14,6 +14,7 @@ from .quora_connector import QuoraConnector
 from .n8n_connector import N8nConnector
 from .brightdata_connector import BrightDataConnector
 from .apify_connector import ApifyConnector
+from .youtube_channel_connector import YouTubeChannelConnector
 from .demo_connector import DemoConnector
 
 # Registry used by the orchestrator to instantiate enabled channels.
@@ -39,5 +40,6 @@ __all__ = [
     "N8nConnector",
     "BrightDataConnector",
     "ApifyConnector",
+    "YouTubeChannelConnector",
     "DemoConnector",
 ]

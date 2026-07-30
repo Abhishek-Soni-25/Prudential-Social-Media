@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import type { AuthorActivity, CaseFile, CompetitorSov, Mention } from "./types";
-import { ALL_CHANNELS, computeInsights, computeStats, drawDemoCases } from "./demo";
+import { ALL_CHANNELS, computeInsights, computeStats } from "./demo";
 import { mentionToCase } from "./adapters";
 import { Sidebar, type Page } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
@@ -16,7 +16,7 @@ import { MarketingReport, ListeningReport, CompetitionReport } from "./pages/Rep
 import { MediaCompliance } from "./pages/MediaCompliance";
 import { MediaComplianceSettings } from "./pages/MediaComplianceSettings";
 
-const REAL_CHANNELS = ["reddit", "youtube", "instagram", "telegram", "quora", "linkedin"];
+const REAL_CHANNELS = ["reddit", "youtube", "youtube_channel", "youtube_shorts", "tiktok", "instagram", "telegram", "quora", "linkedin"];
 
 const META: Record<Page, { title: string; sub: string }> = {
   pinned: { title: "Overview Dashboard", sub: "AI monitoring across channels — sentiment & risk mapped to RACM / KRI." },
@@ -36,21 +36,50 @@ const META: Record<Page, { title: string; sub: string }> = {
   mc_settings: { title: "Media Compliance — Settings", sub: "Manage the Do's and Don'ts. Add your own — they apply to every content, image and video screening." },
 };
 
+// --- URL-hash routing -------------------------------------------------------
+// The current page is persisted in the URL hash (e.g. #campaign) so a browser
+// refresh keeps the user on the same module instead of resetting to the overview.
+const PAGES: Page[] = [
+  "pinned", "listening_overview", "influencer", "campaign_analytics", "pr_dashboard",
+  "content_sense", "content_performance", "marketing", "bench_competition",
+  "reports", "publish", "bulk", "campaign", "compliance", "mc_settings",
+];
+const pageFromHash = (): Page => {
+  const h = window.location.hash.replace(/^#\/?/, "");
+  return (PAGES as string[]).includes(h) ? (h as Page) : "pinned";
+};
+
 export default function App() {
-  const [page, setPage] = useState<Page>("pinned");
+  const [page, setPageState] = useState<Page>(pageFromHash);
   const [mentions, setMentions] = useState<Mention[]>([]);
   const [, setAuthors] = useState<AuthorActivity[]>([]);
-  const [demoCases, setDemoCases] = useState<CaseFile[]>([]);
   const [sov, setSov] = useState<CompetitorSov | null>(null);
   const [compScanning, setCompScanning] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<CaseFile | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
 
+  // Navigate + persist to the URL hash so refresh/back/forward restore the page.
+  const setPage = useCallback((p: Page) => {
+    setPageState(p);
+    if (window.location.hash.replace(/^#\/?/, "") !== p) window.location.hash = p;
+  }, []);
+
+  // Keep state in sync with browser back/forward and manual hash edits.
+  useEffect(() => {
+    const onHash = () => setPageState(pageFromHash());
+    window.addEventListener("hashchange", onHash);
+    // Normalise the initial URL so a bare "/" gets an explicit hash.
+    if (!window.location.hash) window.location.hash = pageFromHash();
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  // Only ever render REAL stored data — no prototype/demo fallback on load.
   const live = mentions.length > 0;
   const channels = live ? REAL_CHANNELS : ALL_CHANNELS;
-  const cases = useMemo(() => (live ? mentions.map(mentionToCase) : demoCases), [live, mentions, demoCases]);
+  const cases = useMemo(() => mentions.map(mentionToCase), [mentions]);
   const stats = useMemo(() => computeStats(cases), [cases]);
   const insights = useMemo(() => computeInsights(cases, channels), [cases, channels]);
 
@@ -58,13 +87,15 @@ export default function App() {
     try {
       const [m, a, s] = await Promise.all([api.mentions(), api.authors(), api.competitors().catch(() => null)]);
       setMentions(m ?? []); setAuthors(a ?? []); if (s) setSov(s);
-      setBanner(m && m.length ? null : "No stored mentions yet — showing prototype data. Click “Run Scan”.");
+      setBanner(m && m.length ? null : "No stored mentions yet. Click “Run Scan” to ingest and analyse content.");
     } catch {
-      setBanner("Backend (:8000) unreachable — showing prototype data.");
+      setBanner("Backend (:8000) unreachable — start the API to load stored data.");
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
-  useEffect(() => { setDemoCases(drawDemoCases()); refresh(); }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]);
 
   const runScan = useCallback(async () => {
     if (!window.confirm("Run a fresh scan? This calls Bright Data + Apify + Groq and is billable.")) return;
@@ -94,6 +125,12 @@ export default function App() {
       <div className="content">
         <TopBar title={meta.title} subtitle={meta.sub} count={mentions.length} running={loading} live={live} onScan={runScan} onMenu={() => setNavOpen((o) => !o)} />
         <main className="page">
+          {!loaded ? (
+            <div className="app-loading">
+              <span className="spinner" /> Loading stored data…
+            </div>
+          ) : (
+          <>
           {banner && <div className="banner banner-info">ℹ {banner}</div>}
 
           {page === "pinned" && <Overview stats={stats} insights={insights} mentions={mentions} cases={cases} onSelect={sel} />}
@@ -116,6 +153,8 @@ export default function App() {
             Monitors public &amp; legally authorized channels only · PII pseudonymized · PDPA / GDPR.
             Data stored from the last scan — re-scan is manual to control provider cost.
           </div>
+          </>
+          )}
         </main>
       </div>
       {selected && <CaseDrawer c={selected} onClose={() => setSelected(null)} />}

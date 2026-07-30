@@ -67,6 +67,8 @@ body {
 .btn:disabled { opacity: .55; cursor: not-allowed; }
 .spinner { width: 13px; height: 13px; border: 2px solid rgba(255,255,255,.45); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.app-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 80px 20px; color: var(--ink-faint); font-size: 14px; }
+.app-loading .spinner { width: 18px; height: 18px; border-color: rgba(0,0,0,.15); border-top-color: var(--pru-red); }
 
 /* ---------- Red nav band (rounded, inset) ---------- */
 .pru-navwrap { background: #fff; padding: 0 22px 0; }
@@ -782,11 +784,19 @@ tbody tr:hover { background: #fcf4f5; }
 @media (max-width: 900px) { .mcs-cols { grid-template-columns: 1fr; } }
 
 /* ===== Compliance status chip in analysed-content table ===== */
-.mc-status-chip { border: none; cursor: pointer; font-size: 11px; font-weight: 800; letter-spacing: .02em;
-  padding: 4px 11px; border-radius: 999px; white-space: nowrap; transition: filter .12s; }
-.mc-status-chip:hover { filter: brightness(0.95); }
+.mc-status-chip { display: inline-block; border: none; cursor: default; font-size: 11px; font-weight: 800; letter-spacing: .02em;
+  padding: 4px 11px; border-radius: 999px; white-space: nowrap; }
 .mc-status-chip.compliant { background: #e7f7ee; color: var(--ok); }
 .mc-status-chip.noncompliant { background: var(--high-bg); color: var(--high); }
+/* Non-compliance reason list in the case drawer */
+.mc-reason-list { margin: 6px 0 0; padding-left: 18px; }
+.mc-reason-list li { font-size: 12.5px; line-height: 1.5; color: var(--ink); margin-bottom: 5px; }
+/* Drawer footer action (send notification) */
+.drawer-foot { position: sticky; bottom: 0; padding: 14px 24px; border-top: 1px solid var(--line);
+  background: var(--panel); }
+.drawer-notify-btn { width: 100%; justify-content: center; }
+.mc-notify-done { text-align: center; font-size: 13px; font-weight: 600; color: var(--ok);
+  background: #e7f7ee; border-radius: 10px; padding: 11px 14px; }
 .mc-toast { position: fixed; right: 24px; bottom: 24px; z-index: 50; background: var(--ink); color: #fff;
   padding: 12px 18px; border-radius: 12px; font-size: 13px; font-weight: 600; box-shadow: var(--shadow); max-width: 380px; }
 

@@ -57,6 +57,7 @@ class ApifyConnector(BaseConnector):
         max_items: int = 25,
         timeout: int = 300,
         state_key: str | None = None,
+        first_party: bool = False,
     ) -> None:
         self.channel = channel  # set before base builds its state path
         super().__init__(sources=keywords, max_items=max_items, state_key=state_key)
@@ -67,6 +68,10 @@ class ApifyConnector(BaseConnector):
         # secret_inputs: {actor_input_field: ENV_VAR_NAME} injected at run time from .env.
         self._secret_inputs = secret_inputs or {}
         self._timeout = timeout
+        # first_party: this actor scrapes the org's OWN channel (e.g. its YouTube uploads),
+        # so every item is relevant by definition — mark the source so the relevance filter
+        # keeps it even when a title doesn't happen to contain a brand alias.
+        self._first_party = first_party
         self._token: str | None = None
 
     def setup(self) -> None:
@@ -162,7 +167,10 @@ class ApifyConnector(BaseConnector):
             if rid in seen_ids:
                 continue
             seen_ids.add(rid)
-            out.append(_to_post(self.channel, rid, fields))
+            post = _to_post(self.channel, rid, fields)
+            if self._first_party:
+                post.source = f"company:{self.channel}"   # always passes the relevance filter
+            out.append(post)
             if len(out) >= self.max_items:
                 break
 
@@ -175,15 +183,62 @@ class ApifyConnector(BaseConnector):
 def _normalize_instagram(r: dict) -> dict:
     caption = (r.get("caption") or "").strip()
     tags = " ".join(f"#{h}" for h in (r.get("hashtags") or []))
+    post_url = r.get("post_url") or r.get("url")
+    # Reels are videos — flag them and expose a downloadable video url so the pipeline can
+    # transcribe the spoken content and score the reel's sentiment, not just the caption.
+    ptype = str(r.get("product_type") or r.get("type") or "").lower()
+    is_reel = ("clips" in ptype or ptype == "video" or "/reel" in (post_url or ""))
+    video_url = r.get("video_url") or r.get("videoUrl") or r.get("videoUrlHd") or r.get("video")
     return {
-        "id": r.get("post_url") or r.get("username"),
+        "id": post_url or r.get("username"),
         "text": (caption + ("\n" + tags if tags else "")).strip(),
-        "url": r.get("post_url"),
+        "url": post_url,
         "author": r.get("username"),
         "author_url": r.get("profile_url"),
-        "timestamp": r.get("pub_date") or r.get("scraped_at"),
+        "timestamp": r.get("pub_date") or r.get("scraped_at") or r.get("timestamp"),
         "keyword": r.get("search_keyword"),
-        "engagement": {"likes": r.get("like_count"), "comments": r.get("comment_count")},
+        "engagement": {"likes": r.get("like_count"), "comments": r.get("comment_count"), "views": r.get("video_view_count") or r.get("play_count")},
+        "is_video": bool(is_reel or video_url),
+        "video_url": video_url,
+    }
+
+
+def _normalize_tiktok(r: dict) -> dict:
+    """clockworks/tiktok-scraper record — video caption, author, engagement, and (when
+    requested) an auto-caption subtitle track we use to transcribe the reel's speech."""
+    author = r.get("authorMeta") if isinstance(r.get("authorMeta"), dict) else {}
+    vmeta = r.get("videoMeta") if isinstance(r.get("videoMeta"), dict) else {}
+    caption = (r.get("text") or "").strip()
+    hashtags = r.get("hashtags") or []
+    tag_str = " ".join(
+        f"#{h.get('name') if isinstance(h, dict) else h}" for h in hashtags if h
+    )
+    # Prefer an English auto-caption subtitle download link when present.
+    subs = vmeta.get("subtitleLinks") if isinstance(vmeta.get("subtitleLinks"), list) else []
+    sub_url = None
+    if subs:
+        eng = [s for s in subs if isinstance(s, dict) and str(s.get("language", "")).lower().startswith("eng")]
+        pick = (eng or [s for s in subs if isinstance(s, dict)])
+        if pick:
+            sub_url = pick[0].get("downloadLink") or pick[0].get("link")
+    media_urls = r.get("mediaUrls") if isinstance(r.get("mediaUrls"), list) else []
+    video_url = (media_urls[0] if media_urls else None) or vmeta.get("downloadAddr") or r.get("videoUrl")
+    handle = author.get("name") or author.get("uniqueId")
+    return {
+        "id": r.get("id") or r.get("webVideoUrl"),
+        "text": (caption + ("\n" + tag_str if tag_str else "")).strip() or (r.get("webVideoUrl") or ""),
+        "url": r.get("webVideoUrl") or r.get("url"),
+        "author": handle or author.get("nickName"),
+        "author_url": f"https://www.tiktok.com/@{handle}" if handle else None,
+        "timestamp": r.get("createTimeISO") or r.get("createTime"),
+        "keyword": r.get("searchQuery") or r.get("search_keyword"),
+        "engagement": {
+            "likes": r.get("diggCount"), "comments": r.get("commentCount"),
+            "views": r.get("playCount"), "shares": r.get("shareCount"),
+        },
+        "is_video": True,
+        "video_url": video_url,
+        "subtitle_url": sub_url,
     }
 
 
@@ -258,11 +313,54 @@ def _normalize_generic(r: dict) -> dict:
     }
 
 
+def _normalize_youtube_apidojo(r: dict) -> dict:
+    """apidojo/youtube-scraper record — a channel's uploaded videos (title, description,
+    views/likes/comments, upload date). Transcribed downstream for sentiment."""
+    ch = r.get("channel") if isinstance(r.get("channel"), dict) else {}
+    title = (r.get("title") or "").strip()
+    desc = (r.get("description") or "").strip()
+    return {
+        "id": r.get("id") or r.get("url"),
+        "text": (title + ("\n" + desc if desc else "")).strip() or title,
+        "url": r.get("url"),
+        "author": ch.get("name") or ch.get("handle") or "Prudential Singapore",
+        "author_url": ch.get("url"),
+        "timestamp": r.get("uploadDate") or r.get("publishDate"),
+        "keyword": None,
+        "engagement": {"likes": r.get("likes"), "comments": r.get("comments"), "views": r.get("views")},
+        "is_video": True,
+    }
+
+
+def _normalize_youtube_shorts(r: dict) -> dict:
+    """streamers/youtube-shorts-scraper record — a channel's Shorts (title, description,
+    views/likes/comments, date). Transcribed downstream for sentiment."""
+    title = (r.get("title") or "").strip()
+    desc = (r.get("text") or "").strip()
+    subs = r.get("subtitles")
+    sub_url = subs if isinstance(subs, str) and subs.startswith("http") else None
+    return {
+        "id": r.get("id") or r.get("url"),
+        "text": (title + ("\n" + desc if desc else "")).strip() or title,
+        "url": r.get("url"),
+        "author": r.get("channelName") or r.get("channelUsername") or "Prudential Singapore",
+        "author_url": r.get("channelUrl"),
+        "timestamp": r.get("date"),
+        "keyword": None,
+        "engagement": {"likes": r.get("likes"), "comments": r.get("commentsCount"), "views": r.get("viewCount")},
+        "is_video": True,
+        "subtitle_url": sub_url,
+    }
+
+
 _NORMALIZERS = {
     "instagram": _normalize_instagram,
     "telegram": _normalize_telegram,
     "quora": _normalize_quora,
     "linkedin": _normalize_linkedin,
+    "tiktok": _normalize_tiktok,
+    "youtube_channel": _normalize_youtube_apidojo,
+    "youtube_shorts": _normalize_youtube_shorts,
 }
 
 
@@ -284,6 +382,10 @@ def _to_post(channel: str, rid: str, f: dict) -> Post:
             "author_url": f.get("author_url"),
             "keyword": f.get("keyword"),
             "engagement": engagement,
+            # Video/reel enrichment hints consumed by media_enrich.py.
+            "is_video": bool(f.get("is_video")),
+            "video_url": f.get("video_url"),
+            "subtitle_url": f.get("subtitle_url"),
         },
     )
 

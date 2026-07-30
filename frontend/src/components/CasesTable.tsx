@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import type { CaseFile } from "../types";
 import type { RuleSet, ExtractedAsset } from "@compliance/types";
 import { loadActiveRuleSet, runScreening } from "@compliance/screening";
-import { api } from "../api";
 import { CategoryChip, ConfidenceBar, SentimentTag, SeverityBadge, fmtTime } from "./ui";
 
 /**
@@ -30,7 +29,6 @@ export function CasesTable({
   onSelect: (c: CaseFile) => void;
 }) {
   const [ruleSet, setRuleSet] = useState<RuleSet | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     loadActiveRuleSet().then(setRuleSet).catch(() => setRuleSet(null));
@@ -43,17 +41,6 @@ export function CasesTable({
     return map;
   }, [cases, ruleSet]);
 
-  const notify = async (c: CaseFile, compliant: boolean) => {
-    const status = compliant ? "compliant" : "non_compliant";
-    try {
-      const r = await api.complianceNotify({ author: c.author_ref || "the author", status, channel: c.platform, mentionId: c.case_id });
-      setToast(r.message);
-    } catch {
-      setToast(`Notification sent to ${c.author_ref || "the author"}.`);
-    }
-    window.setTimeout(() => setToast(null), 3500);
-  };
-
   if (cases.length === 0) {
     return (
       <div className="empty">
@@ -65,7 +52,6 @@ export function CasesTable({
   }
   return (
     <div className="table-scroll">
-      {toast && <div className="mc-toast">🔔 {toast}</div>}
       <table>
         <thead>
           <tr>
@@ -95,13 +81,14 @@ export function CasesTable({
                   {compliant === null ? (
                     <span className="muted">…</span>
                   ) : (
-                    <button
+                    // Read-only status. Clicking it does nothing (and must not open the
+                    // row drawer); open the row itself to see the reason + notify action.
+                    <span
                       className={`mc-status-chip ${compliant ? "compliant" : "noncompliant"}`}
-                      title="Click to notify the author"
-                      onClick={(e) => { e.stopPropagation(); notify(c, compliant); }}
+                      onClick={(e) => e.stopPropagation()}
                     >
                       {compliant ? "Compliant" : "Non-compliant"}
-                    </button>
+                    </span>
                   )}
                 </td>
                 <td className="muted">{fmtTime(c.created_at)}</td>

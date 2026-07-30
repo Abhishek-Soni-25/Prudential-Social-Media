@@ -16,6 +16,7 @@ import logging
 import time
 
 from .config import load_config
+from datetime import datetime, timezone
 from .connectors import (
     CONNECTOR_REGISTRY,
     ConnectorUnavailable,
@@ -23,11 +24,13 @@ from .connectors import (
     N8nConnector,
     BrightDataConnector,
     ApifyConnector,
+    YouTubeChannelConnector,
 )
 from .pipeline import ingest, sentiment as sentiment_mod, alerting, relevance
 from .pipeline.risk_classifier import RiskClassifier
 from . import case_management
 from . import mentions as mentions_store
+from . import media_enrich
 from .escalation import Escalation
 
 log = logging.getLogger("surveillance")
@@ -43,6 +46,35 @@ def _keywords_for(ch_cfg: dict, cfg: dict) -> list[str]:
         or cfg.get("target", {}).get("aliases", [])
     )
     return kw_store.merged(base)
+
+
+def _parse_date(value, end_of_day: bool = False):
+    """Parse a YYYY-MM-DD (or ISO) config value into a tz-aware UTC datetime, or None."""
+    if not value:
+        return None
+    try:
+        s = str(value).strip()
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00")) if ("T" in s or ":" in s) else datetime.strptime(s, "%Y-%m-%d")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        if end_of_day and "T" not in s and ":" not in s:
+            dt = dt.replace(hour=23, minute=59, second=59)
+        return dt
+    except (ValueError, TypeError):
+        return None
+
+
+def _within_window(ts, since, until) -> bool:
+    """True if ``ts`` falls within [since, until]. Open-ended when a bound is None."""
+    if ts is None:
+        return True
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    if since and ts < since:
+        return False
+    if until and ts > until:
+        return False
+    return True
 
 
 def build_connectors(cfg: dict):
@@ -78,16 +110,27 @@ def build_connectors(cfg: dict):
             ap = cfg.get("apify", {})
             actor_key = ch_cfg.get("actor", name)
             actor_cfg = ap.get("actors", {}).get(actor_key, {})
+            first_party = ch_cfg.get("first_party", False)
+            # First-party channels pass an explicit input (e.g. the channel URL) and must
+            # NOT be mixed with the user's campaign keywords.
+            kw = ch_cfg.get("keywords", []) if first_party else _keywords_for(ch_cfg, cfg)
             connector = ApifyConnector(
                 channel=name,
                 actor_id=actor_cfg.get("id", ""),
-                keywords=_keywords_for(ch_cfg, cfg),
+                keywords=kw,
                 keyword_field=actor_cfg.get("keyword_field", "keywords"),
                 keyword_as_list=actor_cfg.get("keyword_as_list", True),
                 input_template=actor_cfg.get("input_template", {}),
                 secret_inputs=actor_cfg.get("secret_inputs", {}),
                 max_items=max_items,
                 timeout=ap.get("run_timeout_seconds", 300),
+                first_party=first_party,
+            )
+        elif mode == "youtube_channel":
+            connector = YouTubeChannelConnector(
+                channel=name,
+                handle=ch_cfg.get("handle", ""),
+                max_items=max_items,
             )
         else:
             cls = CONNECTOR_REGISTRY.get(name)
@@ -113,6 +156,14 @@ def run_cycle(connectors, classifier, escalation, cfg) -> dict:
     hash_author = cfg.get("privacy", {}).get("hash_author_ids", True)
     target = cfg.get("target", {})
 
+    # Collection window (e.g. the last 3 months). Items outside it are dropped so the
+    # knowledge base only holds the requested period. Also caps how many videos/reels
+    # are transcribed per scan (the most expensive step).
+    coll = cfg.get("collection", {})
+    since = _parse_date(coll.get("since"))
+    until = _parse_date(coll.get("until"), end_of_day=True)
+    video_budget = {"left": int(coll.get("max_video_transcriptions", 40))}
+
     stats = {"ingested": 0, "filtered": 0, "analyzed": 0,
              "HIGH": 0, "MEDIUM": 0, "LOW": 0, "NONE": 0}
 
@@ -127,12 +178,24 @@ def run_cycle(connectors, classifier, escalation, cfg) -> dict:
             cleaned = ingest.clean_post(post)
             if cleaned is None:
                 continue
+
+            # Keep only content inside the configured collection window.
+            if not _within_window(cleaned.timestamp, since, until):
+                stats["filtered"] += 1
+                continue
             stats["ingested"] += 1
 
             # Narrow to content about the monitored target before spending tokens.
             if not relevance.is_relevant(cleaned, target):
                 stats["filtered"] += 1
                 continue
+
+            # Video / reel channels: fold a transcript of the spoken content into the
+            # text so the sentiment/risk pass scores the clip, not just its caption.
+            try:
+                media_enrich.enrich_post(cleaned, cfg, video_budget)
+            except Exception as exc:  # noqa: BLE001 — enrichment must never break a scan
+                log.info("media enrichment skipped for %s: %s", cleaned.channel, exc)
 
             sent = sentiment_mod.analyze(cleaned.text)
 

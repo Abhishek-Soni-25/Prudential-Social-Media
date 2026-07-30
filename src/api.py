@@ -36,6 +36,7 @@ from . import competitors as competitors_store
 from . import keywords as keywords_store
 from . import publish as publish_store
 from . import compliance as compliance_mod
+from . import media_enrich
 from .pipeline.risk_classifier import RiskClassifier
 from .escalation import Escalation
 from . import main as pipeline_main
@@ -52,6 +53,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _no_store(request, call_next):
+    """Never cache the API responses or the SPA shell, so a reload always shows the
+    latest stored data (and picks up a freshly built frontend bundle) instead of a stale
+    cached copy. Hashed static assets (JS/CSS) keep their default long-cache behaviour."""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/api") or path == "/" or path.endswith(".html"):
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+    return response
 
 # --- Lazy singletons -----------------------------------------------------------
 
@@ -417,6 +430,100 @@ def publish_post(body: dict[str, Any]) -> dict[str, Any]:
 @app.get("/api/publish/outbox")
 def publish_outbox() -> list[dict[str, Any]]:
     return publish_store.load_outbox()
+
+
+# --- Single-URL video / reel analysis -----------------------------------------------
+# Fetch ONE TikTok / YouTube / Instagram video by its URL, transcribe the spoken content,
+# score its sentiment & risk with Groq, and store it in the knowledge base.
+
+def _detect_platform(url: str) -> str:
+    u = url.lower()
+    if "tiktok.com" in u:
+        return "tiktok"
+    if "youtube.com" in u or "youtu.be" in u:
+        return "youtube"
+    if "instagram.com" in u:
+        return "instagram"
+    return "unknown"
+
+
+def _apify_records_for_urls(actor_key: str, url_field: str, urls: list[str]) -> list[dict]:
+    """Run an Apify actor for specific post URLs (not a keyword search)."""
+    from .connectors.apify_connector import ApifyConnector
+
+    ap = _cfg.get("apify", {})
+    acfg = ap.get("actors", {}).get(actor_key, {})
+    conn = ApifyConnector(
+        channel=actor_key,
+        actor_id=acfg.get("id", ""),
+        keywords=["_"],
+        input_template=acfg.get("input_template", {}),
+        secret_inputs=acfg.get("secret_inputs", {}),
+        timeout=ap.get("run_timeout_seconds", 300),
+    )
+    conn.setup()
+    actor_input = conn._base_input()
+    actor_input[url_field] = urls
+    actor_input["resultsPerPage"] = len(urls)
+    return conn._run(actor_input)
+
+
+def _build_video_post(url: str, platform: str) -> Post | None:
+    """Build a normalised Post for a single video URL (transcript added by the caller)."""
+    from .connectors.apify_connector import _normalize_tiktok, _normalize_instagram, _to_post
+
+    if platform == "youtube":
+        return Post(
+            channel="youtube", source="search:youtube-url",
+            message_id=str(compliance_mod.youtube_id(url) or abs(hash(url))),
+            author_id="youtube", timestamp=datetime.now(timezone.utc),
+            text="YouTube video", url=url, raw_meta={"provider": "youtube", "is_video": True},
+        )
+    if platform in ("tiktok", "instagram"):
+        actor_key = platform
+        url_field = "postURLs" if platform == "tiktok" else "directUrls"
+        records = _apify_records_for_urls(actor_key, url_field, [url])
+        if not records:
+            return None
+        norm = _normalize_tiktok if platform == "tiktok" else _normalize_instagram
+        fields = norm(records[0]) or {}
+        if not fields.get("text") and not fields.get("url"):
+            return None
+        rid = str(fields.get("id") or url)
+        return _to_post(platform, rid, fields)
+    return None
+
+
+@app.post("/api/analyze/video")
+def analyze_video(body: dict[str, Any]) -> dict[str, Any]:
+    """Analyse a single TikTok / YouTube / Instagram video by URL: transcribe the reel,
+    compute its sentiment + risk with Groq, and persist it to the mentions knowledge base."""
+    url = (body.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Provide a video URL.")
+    platform = _detect_platform(url)
+    if platform == "unknown":
+        raise HTTPException(status_code=422, detail="URL is not a TikTok, YouTube or Instagram link.")
+    try:
+        post = _build_video_post(url, platform)
+        if post is None:
+            raise HTTPException(status_code=422, detail=f"Could not fetch the {platform} video (check URL / provider credentials).")
+        transcript = media_enrich.enrich_post(post, _cfg, {"left": 1})
+        assessment = _get_classifier().classify(post)
+        rec = mentions_store.record_mention(post, assessment)
+        return {
+            "analysed": True, "platform": platform,
+            "sentiment": assessment.sentiment, "risk_category": assessment.category,
+            "severity": assessment.severity, "confidence": assessment.confidence,
+            "rationale": assessment.rationale, "indicators": assessment.indicators,
+            "transcript": transcript, "text": post.text, "url": post.url,
+            "mention_id": rec.get("id"),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.exception("analyze_video failed")
+        raise HTTPException(status_code=500, detail=f"Video analysis failed: {exc}")
 
 
 # --- Media Compliance (FSG-03) ------------------------------------------------------
