@@ -1,7 +1,7 @@
 export function TopBar({
-  title, subtitle, count, running, live, onScan, onMenu,
+  title, subtitle, count, running, live, onScan, onMenu, onLogout,
 }: {
-  title: string; subtitle: string; count: number; running: boolean; live: boolean; onScan: () => void; onMenu?: () => void;
+  title: string; subtitle: string; count: number; running: boolean; live: boolean; onScan: () => void; onMenu?: () => void; onLogout?: () => void;
 }) {
   return (
     <div className="topbar">
@@ -19,6 +19,11 @@ export function TopBar({
         <button className="btn" onClick={onScan} disabled={running} title="Runs a fresh (billable) collection across all channels">
           {running ? <><span className="spinner" /> Scanning…</> : <>▶ Run Scan</>}
         </button>
+        {onLogout && (
+          <button className="btn-logout" onClick={onLogout} title="Log out">
+            ⏻ Log out
+          </button>
+        )}
       </div>
     </div>
   );

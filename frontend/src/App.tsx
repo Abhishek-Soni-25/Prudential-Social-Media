@@ -5,6 +5,7 @@ import { ALL_CHANNELS, computeInsights, computeStats } from "./demo";
 import { mentionToCase } from "./adapters";
 import { Sidebar, type Page } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
+import { Login } from "./components/Login";
 import { CaseDrawer } from "./components/CaseDrawer";
 import { Overview } from "./pages/Overview";
 import { Reports } from "./pages/Reports";
@@ -50,6 +51,10 @@ const pageFromHash = (): Page => {
 };
 
 export default function App() {
+  const [authed, setAuthed] = useState<boolean>(() => localStorage.getItem("pru_auth") === "1");
+  const login = useCallback(() => { localStorage.setItem("pru_auth", "1"); setAuthed(true); }, []);
+  const logout = useCallback(() => { localStorage.removeItem("pru_auth"); setAuthed(false); }, []);
+
   const [page, setPageState] = useState<Page>(pageFromHash);
   const [mentions, setMentions] = useState<Mention[]>([]);
   const [, setAuthors] = useState<AuthorActivity[]>([]);
@@ -95,7 +100,7 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { if (authed) refresh(); }, [refresh, authed]);
 
   const runScan = useCallback(async () => {
     if (!window.confirm("Run a fresh scan? This calls Bright Data + Apify + Groq and is billable.")) return;
@@ -118,12 +123,15 @@ export default function App() {
   const meta = META[page];
   const sel = setSelected;
 
+  // Gate the whole console behind the login screen (after all hooks are declared).
+  if (!authed) return <Login onSuccess={login} />;
+
   return (
     <div className={`shell${navOpen ? " nav-open" : ""}`}>
       <Sidebar active={page} onNav={(p) => { setPage(p); setNavOpen(false); }} />
       {navOpen && <div className="nav-scrim" onClick={() => setNavOpen(false)} />}
       <div className="content">
-        <TopBar title={meta.title} subtitle={meta.sub} count={mentions.length} running={loading} live={live} onScan={runScan} onMenu={() => setNavOpen((o) => !o)} />
+        <TopBar title={meta.title} subtitle={meta.sub} count={mentions.length} running={loading} live={live} onScan={runScan} onLogout={logout} onMenu={() => setNavOpen((o) => !o)} />
         <main className="page">
           {!loaded ? (
             <div className="app-loading">

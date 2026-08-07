@@ -812,3 +812,31 @@ tbody tr:hover { background: #fcf4f5; }
 .sugg-item:hover { border-color: var(--pru-red); background: var(--pru-red-soft); }
 .sugg-more { margin-top: 10px; border: none; background: transparent; color: var(--pru-red); font-weight: 700;
   font-size: 12.5px; cursor: pointer; padding: 4px 0; }
+
+/* ============ Login page ============ */
+.login-shell { min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #fdeced 0%, #f5f6f8 45%, #eef0f4 100%); padding: 24px; }
+.login-card { width: 100%; max-width: 400px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 18px; box-shadow: 0 18px 50px rgba(17,24,39,.12); padding: 34px 32px 26px;
+  display: flex; flex-direction: column; }
+.login-logo { width: 132px; height: auto; align-self: center; margin-bottom: 18px; }
+.login-title { font-size: 18px; font-weight: 800; color: var(--ink); text-align: center; margin: 0 0 4px; line-height: 1.25; }
+.login-sub { font-size: 13px; color: var(--ink-soft); text-align: center; margin: 0 0 22px; }
+.login-label { font-size: 12px; font-weight: 700; color: var(--ink-soft); margin: 0 0 6px; }
+.login-input { width: 100%; box-sizing: border-box; padding: 11px 12px; font-size: 14px; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 10px; background: #fff; outline: none; transition: border-color .15s, box-shadow .15s; margin-bottom: 16px; }
+.login-input:focus { border-color: var(--pru-red); box-shadow: 0 0 0 3px var(--pru-red-soft); }
+.login-pw { position: relative; }
+.login-pw .login-input { padding-right: 62px; }
+.login-eye { position: absolute; right: 8px; top: 8px; height: 28px; padding: 0 10px; border: none; background: transparent;
+  color: var(--pru-red); font-size: 12px; font-weight: 700; cursor: pointer; border-radius: 8px; }
+.login-eye:hover { background: var(--pru-red-soft); }
+.login-error { background: var(--pru-red-soft); color: var(--pru-red-dark); border: 1px solid #f6c7cc;
+  border-radius: 10px; padding: 9px 12px; font-size: 12.5px; font-weight: 600; margin-bottom: 14px; }
+.login-btn { width: 100%; justify-content: center; padding: 12px; font-size: 15px; margin-top: 2px; }
+.login-foot { text-align: center; font-size: 11.5px; color: var(--ink-faint); margin-top: 18px; }
+
+/* Logout button in the top bar */
+.btn-logout { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; font-size: 13px; font-weight: 700;
+  color: var(--ink-soft); background: #fff; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; transition: all .15s; }
+.btn-logout:hover { color: var(--pru-red); border-color: var(--pru-red); background: var(--pru-red-soft); }
